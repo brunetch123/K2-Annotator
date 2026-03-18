@@ -1,0 +1,94 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+.Python
+*.egg-info/
+eggs/
+*.egg
+
+# PyInstaller build artifacts
+build/
+dist/
+K2_v*_Windows/
+K2_v*_Windows.zip
+*.spec.bak
+
+# Environment
+.env
+*.env
+venv/
+.venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# User files (contain personal settings)
+.k2/
+*.K2config
+*.build_backup
+*.json.backup
+# Note: users/default.mzuser is tracked as a template
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+nul
+
+# Temp / lock files
+~$*
+*.tmp
+*.temp
+
+# Test outputs
+test/results/
+results/
+temp/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Project files (user-specific)
+*.K2
+
+# Bundled third-party software (too large for git)
+software/
+
+# Generated presentation figures
+presentation_figures/
+
+# Personal / non-project files
+BrunetNextPatient_20260207.pdf
+
+# Development TODO (personal notes)
+ToDoList.txt
+
+# Generated files
+MSDial_RICal.txt
+K2.pdf
+
+# Large data files (distribute separately)
+unified_library_*.csv
+
+# Generated icons (built from PNG by create_icon.py)
+K2Icon.ico
+
+# Claude Code
+.claude/
+
+# Cursor AI
+.cursor/

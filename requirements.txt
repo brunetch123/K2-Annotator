@@ -1,0 +1,21 @@
+# GC-MS Pipeline Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Visualization
+matplotlib>=3.7.0
+Pillow>=10.0.0
+
+# PDF reporting
+reportlab>=4.0.0
+
+# Chemistry APIs
+pubchempy>=1.0.0
+requests>=2.28.0
+ctx-python>=0.1.0  # EPA CompTox API wrapper (v2.9.0)
+
+# Molecular mass calculations
+molmass>=2023.0.0

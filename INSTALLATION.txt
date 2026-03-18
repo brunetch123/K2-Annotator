@@ -1,0 +1,152 @@
+================================================================================
+K2 GC-MS Suspect Screening Pipeline
+Version 3.0.2
+================================================================================
+
+INSTALLATION INSTRUCTIONS
+=========================
+
+Quick Start:
+------------
+1. Extract this ZIP file to your desired location (e.g., C:\K2\)
+2. Double-click K2.exe to launch the application
+3. On first run, configure paths to external software (see below)
+4. See K2_USER_GUIDE.md for detailed instructions
+
+
+SYSTEM REQUIREMENTS
+===================
+
+Minimum:
+- Windows 10 or Windows 11
+- 8 GB RAM
+- 10 GB free disk space
+- Internet connection (for EPA CompTox API - optional)
+
+Recommended:
+- 16 GB RAM
+- SSD storage
+- Multi-core processor
+
+
+EXTERNAL SOFTWARE REQUIRED
+==========================
+
+K2 requires the following external tools, which must be downloaded and 
+installed separately due to licensing requirements:
+
+1. ProteoWizard MSConvert (for .D file conversion)
+   -----------------------------------------------
+   - Download: https://proteowizard.sourceforge.io/
+   - Required for: Converting raw Agilent .D files to .mzML format
+   - Install to default location or note the path to msconvert.exe
+   - Typical path: C:\Program Files\ProteoWizard\msconvert.exe
+
+2. MZmine 3.x (for feature detection and deconvolution)
+   -----------------------------------------------------
+   - Download: https://github.com/mzmine/mzmine/releases
+   - Required for: Processing .mzML files, detecting features
+   - Download the Windows installer (mzmine-windows-installer.exe)
+   - Note the path to mzmine_console.exe after installation
+   - Typical path: C:\Program Files\mzmine\mzmine_console.exe
+
+
+FIRST-TIME SETUP
+================
+
+1. Launch K2.exe
+
+2. Click "Start New Analysis"
+
+3. Select your entry point:
+   - "Instrument Files (.D)" - Full pipeline from raw data
+   - "Instrument Files (.mzML)" - Skip conversion step
+   - "Deconvoluted Spectra (.MSP)" - Library matching only
+
+4. Configure external tools:
+   - Browse to locate msconvert.exe (if using .D files)
+   - Browse to locate mzmine_console.exe (if using MZmine)
+   - Check "Save as default" to remember paths
+
+5. Configure analysis parameters:
+   - Select your spectral library (.CSV or .MSP format)
+   - Select RI calibration file (optional)
+   - Enter EPA API key (optional, for hazard data)
+
+6. Run your first analysis!
+
+
+INCLUDED FILES
+==============
+
+K2.exe                  - Main application executable
+K2_USER_GUIDE.md        - Complete user documentation
+README.md               - Quick overview
+CHANGELOG.md            - Version history
+QUICK_START.md          - Getting started guide
+
+config/                 - Configuration files
+  gc_ei_workflow.mzbatch  - Example MZmine batch configuration
+
+users/                  - User settings
+  default.mzuser          - Template user file
+
+templates/              - Example files
+  library_template.csv    - Example library (CSV format)
+  library_template.msp    - Example library (MSP format)
+
+
+TROUBLESHOOTING
+===============
+
+Problem: K2.exe won't start
+Solution: 
+- Ensure you extracted the entire ZIP contents (not just K2.exe)
+- Check that Windows Defender isn't blocking the file
+- Try running as Administrator
+
+Problem: "msconvert.exe not found"
+Solution:
+- Download and install ProteoWizard
+- In K2, use Browse button to locate msconvert.exe
+- Check "Save as default"
+
+Problem: MZmine processing fails
+Solution:
+- Ensure MZmine 3.x is installed (not MZmine 2)
+- Verify mzmine_console.exe path is correct
+- Check available RAM (MZmine needs significant memory)
+
+Problem: No matches found
+Solution:
+- Verify library file format (CSV needs peaks_json column)
+- Check RI calibration file format
+- Ensure blank identifier matches sample names
+- Try adjusting matching thresholds
+
+
+GETTING HELP
+============
+
+For detailed documentation:
+  - Open K2_USER_GUIDE.md in any text editor or Markdown viewer
+
+For bug reports and feature requests:
+  - [GitHub repository link]
+
+For questions:
+  - [Contact information]
+
+
+LICENSE
+=======
+
+This software is distributed under the MIT License.
+See LICENSE file for full terms.
+
+External tools (ProteoWizard, MZmine) have their own licenses.
+
+
+================================================================================
+Thank you for using K2!
+================================================================================

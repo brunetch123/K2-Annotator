@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<wizard>
+    <wiz_part part="DATA_IMPORT" preset="Data">
+        <parameter name="Metadata file" selected="false"/>
+        <parameter name="File names">
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\Hex1_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\Hex2_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\Hex3_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\Hex4_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\Hex5_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71322-2-2A_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71322-2-2B_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71322-2-3A_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71322-2-3B_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71422-1-2A_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71422-1-2B_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71422-1-3A_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71422-1-3B_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71522-2-2A_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71522-2-2B_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71522-2-3A_20251210.mzML</file>
+            <file>X:\Data\ChrisB\Non-Target\gcms_pipeline\converted\NYC-71522-2-3B_20251210.mzML</file>
+        </parameter>
+    </wiz_part>
+    <wiz_part part="ION_INTERFACE" preset="GC_EI">
+        <parameter name="Smoothing">false</parameter>
+        <parameter name="Recalibrate retention times">false</parameter>
+        <parameter name="Crop retention time">
+            <min>3.0</min>
+            <max>124.5</max>
+        </parameter>
+        <parameter name="Minimum consecutive scans">4</parameter>
+        <parameter name="Min/max feature width">
+            <min>0.0</min>
+            <max>0.06</max>
+        </parameter>
+        <parameter name="Approximate feature FWHM" unit="MINUTES">0.05</parameter>
+        <parameter name="RT tolerance (intra-sample)" unit="MINUTES">0.04</parameter>
+        <parameter name="RT tolerance (sample-to-sample)" unit="MINUTES">0.1</parameter>
+    </wiz_part>
+    <wiz_part part="IMS" preset="NO_IMS">
+        <parameter name="IMS active">false</parameter>
+        <parameter name="Smoothing">true</parameter>
+        <parameter name="IMS type">NONE</parameter>
+        <parameter name="Minimum consecutive scans">5</parameter>
+        <parameter name="Approximate feature FWHM">0.01</parameter>
+    </wiz_part>
+    <wiz_part part="MS" preset="QTOF">
+        <parameter name="Ion mode">No filter</parameter>
+        <parameter choices="ABSOLUTE_NOISE_LEVEL,FACTOR_OF_LOWEST_SIGNAL" ms1_level="500.0" msn_level="100.0" name="Noise threshold" selected_value="ABSOLUTE_NOISE_LEVEL"/>
+        <parameter name="Minimum feature height">1000.0</parameter>
+        <parameter name="m/z tolerance (scan-to-scan)">
+            <absolutetolerance>0.005</absolutetolerance>
+            <ppmtolerance>20.0</ppmtolerance>
+        </parameter>
+        <parameter name="m/z tolerance (intra-sample)">
+            <absolutetolerance>0.0015</absolutetolerance>
+            <ppmtolerance>3.0</ppmtolerance>
+        </parameter>
+        <parameter name="m/z tolerance (sample-to-sample)">
+            <absolutetolerance>0.004</absolutetolerance>
+            <ppmtolerance>8.0</ppmtolerance>
+        </parameter>
+    </wiz_part>
+    <wiz_part part="FILTER" preset="Filters">
+        <parameter name="Original feature list">REMOVE</parameter>
+        <parameter name="Minimum aligned samples">
+            <abs>1</abs>
+            <rel>0.0</rel>
+        </parameter>
+        <parameter name="Minimum aligned samples (in any group)" selected="false">
+            <parameter name="Minimum samples">
+                <abs>1</abs>
+                <rel>0.0</rel>
+            </parameter>
+            <parameter name="Metadata grouping"/>
+        </parameter>
+        <parameter name="Pooled QC area RSD ≤ 20%">false</parameter>
+        <parameter name="Only keep features with 13C">false</parameter>
+        <parameter name="Apply strict shape filtering">false</parameter>
+    </wiz_part>
+    <wiz_part part="ANNOTATION" preset="Annotation">
+        <parameter name="Local compound database search" selected="false">
+            <parameter name="Database file"/>
+            <parameter name="Use precursor m/z">as calculated from neutral mass (or formula/smiles) + ions</parameter>
+            <parameter name="Filename column (for library generation)" selected="false">filename</parameter>
+            <parameter name="Columns">
+                <importtype column="neutral_mass" datatype="io.github.mzmine.datamodel.features.types.numbers.NeutralMassType" selected="true"/>
+                <importtype column="mz" datatype="io.github.mzmine.datamodel.features.types.numbers.PrecursorMZType" selected="true"/>
+                <importtype column="rt" datatype="io.github.mzmine.datamodel.features.types.numbers.RTType" selected="true"/>
+                <importtype column="ri_record" datatype="io.github.mzmine.datamodel.features.types.RIRecordType" selected="false"/>
+                <importtype column="formula" datatype="io.github.mzmine.datamodel.features.types.annotations.formula.FormulaType" selected="true"/>
+                <importtype column="smiles" datatype="io.github.mzmine.datamodel.features.types.annotations.SmilesStructureType" selected="true"/>
+                <importtype column="inchi" datatype="io.github.mzmine.datamodel.features.types.annotations.InChIStructureType" selected="false"/>
+                <importtype column="inchi_key" datatype="io.github.mzmine.datamodel.features.types.annotations.InChIKeyStructureType" selected="false"/>
+                <importtype column="name" datatype="io.github.mzmine.datamodel.features.types.annotations.CompoundNameType" selected="true"/>
+                <importtype column="CCS" datatype="io.github.mzmine.datamodel.features.types.numbers.CCSType" selected="false"/>
+                <importtype column="mobility" datatype="io.github.mzmine.datamodel.features.types.numbers.MobilityType" selected="false"/>
+                <importtype column="comment" datatype="io.github.mzmine.datamodel.features.types.annotations.CommentType" selected="true"/>
+                <importtype column="adduct" datatype="io.github.mzmine.datamodel.features.types.annotations.iin.IonTypeType" selected="false"/>
+                <importtype column="PubChemCID" datatype="io.github.mzmine.datamodel.features.types.annotations.compounddb.PubChemIdType" selected="false"/>
+                <importtype column="molecular_class" datatype="io.github.mzmine.datamodel.features.types.annotations.compounddb.MolecularClassType" selected="false"/>
+                <importtype column="classyfire_superclass" datatype="io.github.mzmine.datamodel.features.types.annotations.compounddb.ClassyFireSuperclassType" selected="false"/>
+                <importtype column="classyfire_class" datatype="io.github.mzmine.datamodel.features.types.annotations.compounddb.ClassyFireClassType" selected="false"/>
+                <importtype column="classyfire_subclass" datatype="io.github.mzmine.datamodel.features.types.annotations.compounddb.ClassyFireSubclassType" selected="false"/>
+                <importtype column="classyfire_direct_parent" datatype="io.github.mzmine.datamodel.features.types.annotations.compounddb.ClassyFireParentType" selected="false"/>
+                <importtype column="npclassifier_superclass" datatype="io.github.mzmine.datamodel.features.types.annotations.compounddb.NPClassifierSuperclassType" selected="false"/>
+                <importtype column="npclassifier_class" datatype="io.github.mzmine.datamodel.features.types.annotations.compounddb.NPClassifierClassType" selected="false"/>
+                <importtype column="npclassifier_pathway" datatype="io.github.mzmine.datamodel.features.types.annotations.compounddb.NPClassifierPathwayType" selected="false"/>
+                <importtype column="q3_quantifier_mz" datatype="io.github.mzmine.datamodel.features.types.numbers.Q3QuantMzType" selected="false"/>
+                <importtype column="iupac_name" datatype="io.github.mzmine.datamodel.features.types.identifiers.IupacNameType" selected="false"/>
+                <importtype column="cas" datatype="io.github.mzmine.datamodel.features.types.identifiers.CASType" selected="false"/>
+                <importtype column="internal_id" datatype="io.github.mzmine.datamodel.features.types.identifiers.InternalIdType" selected="false"/>
+            </parameter>
+        </parameter>
+        <parameter name="Annotate lipids">false</parameter>
+        <parameter name="Formula prediction (for m/z &lt; X)" selected="false">600.0</parameter>
+        <parameter name="Spectral library files"/>
+    </wiz_part>
+    <wiz_part part="WORKFLOW" preset="DECONVOLUTION">
+        <parameter name="Min number of signals in deconvoluted spectrum">8</parameter>
+        <parameter name="Apply spectral / molecular networking">true</parameter>
+        <parameter name="Export path" selected="true">
+            <current_file>X:\Data\ChrisB\Non-Target\gcms_pipeline\mzmine_output\20251215</current_file>
+            <last_file>X:\Data\ChrisB\Non-Target\gcms_pipeline\mzmine_output\20251215</last_file>
+        </parameter>
+        <parameter name="Export for GNPS GC-EI FBMN">true</parameter>
+        <parameter name="Export for MSP">true</parameter>
+        <parameter name="Export annotation graphics">false</parameter>
+    </wiz_part>
+</wizard>

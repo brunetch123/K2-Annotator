@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MZmine User Configuration File
+  
+  This is a template user configuration file for K2 GC-MS Pipeline.
+  Copy this file and rename it to your username (e.g., yourname.mzuser)
+  to create your personal configuration.
+  
+  The file contains MZmine user preferences and can be modified
+  through the MZmine application.
+-->
+<user>
+  <name>Default User</name>
+  <created>2026-01-01</created>
+  <preferences>
+    <!-- Add your MZmine preferences here -->
+  </preferences>
+</user>

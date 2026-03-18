@@ -1,0 +1,210 @@
+# Changelog
+
+All notable changes to the K2 GC-MS Suspect Screening Pipeline will be documented in this file.
+
+## [3.0.3] - 2026-01-31
+
+### Fixed
+- **Default Configuration Paths**: Removed developer-specific paths from distribution. New users now see blank fields for library and RI calibration paths on first launch
+- **Distribution Structure**: Documentation files (README, USER_GUIDE, QUICK_START) and templates folder now appear at top level alongside K2.exe instead of buried in _internal subfolder
+- **User-Specific Files**: Removed user-specific .K2 project files and .K2config presets from templates folder
+
+### Changed
+- **GitHub Distribution**: Repository now configured for downloadable ZIP releases instead of requiring git clone
+- **.gitignore**: Updated to exclude user config directory (.k2/) and .K2config preset files with personal paths
+- **Build Script**: Enhanced create_distribution.bat to automatically restructure distribution after PyInstaller build
+
+### Improved
+- **First-Run Experience**: Clean slate for new users with no pre-populated file paths
+- **Documentation Accessibility**: Key documentation files immediately visible when opening distribution folder
+- **Release Workflow**: Simplified process for downloading and using K2 from GitHub releases
+
+---
+
+## [3.0.2] - 2026-01-25
+
+### Changed
+- **Structure Lookup Safety Improvement**: Removed compound name fallback in `get_structure_image()`
+  - Structures are now fetched exclusively using InChIKey identifiers
+  - If InChIKey is missing or invalid, "Structure Not Available" is displayed instead of potentially incorrect structure
+  - Prevents ambiguous name searches from returning wrong chemical structures
+
+### Why This Change
+- Name-based PubChem searches can match similar compounds or derivatives
+- Some library entries may have missing InChIKey values - better to show no structure than wrong structure
+- Ensures displayed structures match the specific compound identified by the library entry
+
+---
+
+## [3.0.1] - 2026-01-25
+
+### Fixed
+- **Multiple Library Entries for Same Compound**: When the same compound (e.g., phenanthrene) appears multiple times in the library from different sources, each entry now generates its own unique spectral mirror plot in both PDF and GUI displays
+
+### Added
+- `library_index` attribute to `LibraryCompound` - unique identifier assigned to each library entry during loading
+- `Library_Entry_ID` column in CSV output for tracking specific library entries
+- Plot filenames now use `plot_{feat_id}_lib{library_index}.png` format for guaranteed uniqueness
+
+### Changed
+- **library_parser.py**: `LibraryCompound` class now includes `library_index` parameter; indices assigned after RI-sorting
+- **reporter.py**: CSV headers include `Library_Entry_ID`; plot filenames use library index
+- **k2_screens.py**: `update_visuals()` prioritizes library index format for finding plots, with fallback to legacy formats for backward compatibility
+
+### Backward Compatibility
+- Existing CSV files without `Library_Entry_ID` column continue to work (GUI falls back to older filename patterns)
+- Library files require no changes (index is assigned dynamically during loading)
+
+---
+
+## [3.0.0] - 2026-01-28
+
+### Major Feature: Surrogate Standard Recovery Analysis
+
+This release introduces comprehensive surrogate standard recovery calculation, enabling users to track and quantify labeled (13C/deuterated) surrogate standards spiked into samples.
+
+### New Files
+- `scripts/src/surrogate_analyzer.py` - Core surrogate matching and recovery calculation
+- `scripts/src/surrogate_reporter.py` - CSV, PDF, and GUI output generation
+
+### New GUI Screens
+- **SurrogateConfigScreen**: Configure surrogate standard recovery analysis
+  - Enable/disable surrogate recovery calculation
+  - Upload custom surrogate standard library (CSV/MSP)
+  - Select/deselect specific compounds from the library
+
+### Extended Sample Classification Screen
+- New sample type: "Reference" (auto-detected by "ref" in filename)
+- "Spiked" checkbox column for marking samples with surrogate spikes
+- "Spike Ratio" column for relative spike amounts
+- "Group" column for organizing samples by experimental groups
+- Reference samples are automatically excluded from suspect screening
+
+### New Results Tab
+- "Surrogate Recovery" tab in ResultsScreen
+- Recovery summary table with average, standard deviation, and per-sample values
+- Match details for each surrogate compound
+- Export functionality for surrogate data
+
+### CLI Extensions
+- `--surrogate-library` / `-sl`: Path to surrogate standard library
+- `--surrogate-config`: JSON file with surrogate configuration
+- `--reference-samples`: Comma-separated list of reference sample names
+
+### Matching Engine Updates
+- `reference_samples` parameter to exclude samples from BFF calculation
+- Reference samples are excluded from suspect screening workflow
+- Surrogate matching uses same criteria (RI, spectral scores, RHRMF) but skips BFF filter
+
+### Recovery Calculation
+- Formula: `% Recovery = (sample_abundance / sample_ratio) / avg(reference_abundances / reference_ratios) * 100`
+- Group-based calculations allow different reference sets per experimental group
+- IS normalization applied before recovery calculation if enabled
+
+### Output Formats
+- Separate CSV file: `SurrogateRecoveries_{ProjectName}_{date}.csv`
+  - Normalized abundances table
+  - % Recovery table with statistics
+  - Match information table
+- New page in PDF report
+- Dedicated GUI tab with color-coded recovery values
+
+---
+
+## [2.9.1] - 2026-01-26
+
+### Reverted
+- Removed enhanced ToxValDB columns from CSV (data not available for most compounds)
+- Removed severity index, NOAEL, genetox display from GUI
+
+### Retained
+- `ctx-python` package remains installed for future use
+- `scripts/src/ctx_client.py` kept for potential future integration
+- `Hazard_Summary` and `EPA_Link` columns continue to work as in v2.8.0
+
+### Note
+The ToxValDB data via ctx-python was not sufficiently populated for the compounds of interest.
+CSV now shows only the GHS hazard category and EPA CompTox link.
+
+---
+
+## [2.9.0] - 2026-01-26
+
+### Added
+- **Enhanced Hazard Data Integration**: New integration with EPA CompTox via official `ctx-python` package
+  - Quantitative toxicity values from ToxValDB (NOAEL, LOAEL, POD, RfD)
+  - Ecological toxicity data (LC50, LD50)
+  - Genetic toxicity summary (Ames test, positive/negative report counts)
+  - Computed Severity Index (1-5 scale based on toxicity thresholds)
+
+### New CSV Columns (removed in 2.9.1)
+- `Tox_NOAEL` - Most protective No Observable Adverse Effect Level (mg/kg-day)
+- `Tox_LOAEL` - Lowest Observable Adverse Effect Level (mg/kg-day)
+- `Tox_POD` - Point of Departure (mg/kg-day)
+- `Tox_RfD` - EPA Reference Dose (mg/kg-day)
+- `Tox_Source` - Source of toxicity data (e.g., EPA IRIS, ATSDR)
+- `Eco_LC50` - Fish LC50 (mg/L)
+- `Eco_LD50` - Oral LD50 (mg/kg)
+- `Genetox_Positive` - Count of positive genotoxicity reports
+- `Genetox_Negative` - Count of negative genotoxicity reports
+- `Genetox_Ames` - Ames test result (positive/negative)
+- `Severity_Index` - Computed severity score (1-5)
+
+### New Files
+- `scripts/src/ctx_client.py` - EPA CompTox API client using ctx-python package
+
+### Updated
+- `scripts/src/structure_helper.py` - Added `get_enhanced_hazard()` method
+- `scripts/src/reporter.py` - Added 11 new CSV columns for enhanced hazard data
+- `scripts/k2_screens.py` - GUI now displays severity index and key toxicity values
+- `requirements.txt` - Added ctx-python dependency
+
+### Dependencies
+- Added: `ctx-python>=0.1.0` for EPA CompTox API access
+
+---
+
+## [2.8.0] - 2026-01
+
+### Added
+- Internal Standard (IS) normalization integration in Sample Classification screen
+- IS area and normalization factor columns in CSV reports
+- IS area and normalization factor display in GUI sample table
+
+### Fixed
+- Spectral plot display in GUI (now generated during CSV export)
+- IS Area showing as "0" in GUI
+- Hazard summary and EPA link data consistency between CSV and PDF
+- Multiple matches for same feature ID now show correct individual structures/plots
+
+### Removed
+- Log2FoldChange and P-value from GUI (deprecated statistics package)
+- IS normalization info from PDF reports (CSV only)
+
+---
+
+## [2.7.0] - 2026
+
+### Added
+- Structure image helper module separated from statistics visualization
+- High-resolution structure images from PubChem
+- Hazard matrix visualization in PDF reports with color-coded badges
+
+### Changed
+- Replaced Visualizer with StructureHelper for cleaner architecture
+- Statistics module deprecated (external analysis recommended)
+
+---
+
+## [2.6.0] - 2026
+
+### Added
+- MZmine integration for feature detection
+- Universal parser supporting both MS-DIAL and MZmine formats
+- Improved BFF (Blank Feature Filtering) calculations
+
+---
+
+## Previous Versions
+
+See archived code in `scripts/archive/` for historical changes.

@@ -43,6 +43,9 @@ ENV/
 # Logs
 *.log
 
+# Dependency install marker (created by K2.bat on first run)
+.deps_installed
+
 # OS
 .DS_Store
 Thumbs.db

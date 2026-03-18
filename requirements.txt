@@ -19,3 +19,6 @@ ctx-python>=0.1.0  # EPA CompTox API wrapper (v2.9.0)
 
 # Molecular mass calculations
 molmass>=2023.0.0
+
+# Retention index calibration (cubic spline interpolation)
+scipy>=1.10.0

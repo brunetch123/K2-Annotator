@@ -15,7 +15,7 @@ reportlab>=4.0.0
 # Chemistry APIs
 pubchempy>=1.0.0
 requests>=2.28.0
-ctx-python>=0.1.0  # EPA CompTox API wrapper (v2.9.0)
+ctx-python>=0.0.1a1  # EPA CompTox API wrapper (latest: 0.0.1a10)
 
 # Molecular mass calculations
 molmass>=2023.0.0

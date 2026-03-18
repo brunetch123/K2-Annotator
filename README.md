@@ -1,6 +1,6 @@
 # K2 GC-MS Suspect Screening Pipeline
 
-**Version 3.0.2** | Open-source GC-MS data processing and Level 2 compound identification
+**Version 3.0.3** | Open-source GC-MS data processing and Level 2 compound identification
 
 ## Overview
 
@@ -30,14 +30,19 @@ K2 Analyzer is an open-source pipeline for non-targeted GC-MS suspect screening,
 
 ### Installation
 
-1. Clone or download this repository
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/brunetch123/K2-GCMS-Pipeline.git
+   cd K2-GCMS-Pipeline
+   ```
 2. Install Python dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-3. Install external tools (optional but recommended):
-   - [ProteoWizard MSConvert](https://proteowizard.sourceforge.io/) for raw file conversion
-   - [MZmine](https://mzmine.github.io/) for feature detection
+3. Install external tools (required for full pipeline):
+   - [ProteoWizard MSConvert](https://proteowizard.sourceforge.io/) — for raw file conversion (.D → mzML)
+   - [MZmine 3](https://mzmine.github.io/) — for feature detection and deconvolution
+4. Provide a spectral library in CSV or MSP format (see **Library Formats** below)
 
 ### Running the GUI
 
@@ -56,15 +61,20 @@ K2.bat
 python scripts/cli.py --quant data.csv --msp spectra.msp --library library.msp --output results/
 ```
 
-## Documentation
+## External Dependencies
 
-- **[K2_USER_GUIDE.md](K2_USER_GUIDE.md)** - Complete user documentation
-- **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
-- **[QUICK_START.md](QUICK_START.md)** - Quick start guide
+K2 requires the following tools to be installed separately (they are not bundled due to size and licensing):
 
-## Library Formats
+| Tool | Purpose | Download |
+|------|---------|----------|
+| **ProteoWizard MSConvert** | Convert raw instrument files (.D) to mzML | [proteowizard.sourceforge.io](https://proteowizard.sourceforge.io/) |
+| **MZmine 3** | Feature detection, deconvolution, quantification | [mzmine.github.io](https://mzmine.github.io/) |
 
-K2 supports two library formats:
+Place these in a `software/` directory alongside this repository, or configure their paths in the K2 GUI settings.
+
+## Spectral Library
+
+K2 requires a spectral library for compound identification. Users must provide their own library file in one of the supported formats below. Example templates are included in the `templates/` directory.
 
 ### CSV Format
 ```csv
@@ -84,29 +94,84 @@ Num Peaks: 2
 127 150
 ```
 
-## Dependencies
+## Documentation
 
-See [requirements.txt](requirements.txt) for Python packages:
-- pandas, numpy - Data processing
-- matplotlib, Pillow - Visualization
-- reportlab - PDF generation
-- pubchempy - PubChem API access
-- ctx-python - EPA CompTox API
+- **[K2_USER_GUIDE.md](K2_USER_GUIDE.md)** — Complete user documentation
+- **[QUICK_START.md](QUICK_START.md)** — Quick start guide
+- **[INSTALLATION.txt](INSTALLATION.txt)** — Detailed installation instructions
+- **[CHANGELOG.md](CHANGELOG.md)** — Version history and changes
+
+## Project Structure
+
+```
+K2-GCMS-Pipeline/
+├── scripts/
+│   ├── k2_gui.py          # Main GUI application
+│   ├── cli.py             # Command-line interface
+│   ├── gcms_pipeline.py   # Pipeline orchestration
+│   ├── k2_config.py       # Configuration management
+│   ├── k2_screens.py      # GUI screen definitions
+│   ├── main.py            # Entry point
+│   └── src/               # Core processing modules
+│       ├── universal_parser.py    # Multi-format data parser
+│       ├── library_parser.py      # Library file parser
+│       ├── matching_engine.py     # Spectral matching
+│       ├── spectral_math.py       # Dot product scoring
+│       ├── reporter.py            # Report generation
+│       ├── is_normalizer.py       # Internal standard normalization
+│       ├── ri_calibration.py      # Retention index calibration
+│       ├── rhrmf.py               # HR mass formula validation
+│       ├── structure_helper.py    # PubChem structure lookup
+│       ├── surrogate_analyzer.py  # Surrogate recovery analysis
+│       ├── surrogate_reporter.py  # Surrogate recovery reports
+│       ├── ctx_client.py          # EPA CompTox API client
+│       ├── epa_client.py          # Legacy EPA API client
+│       └── msdial_parser.py       # MS-DIAL format parser
+├── config/                # MZmine workflow configurations
+├── templates/             # Library format templates and test data
+├── users/                 # MZmine user profiles
+├── K2.bat                 # Windows launch script
+├── K2.spec                # PyInstaller build specification
+├── requirements.txt       # Python dependencies
+└── LICENSE                # MIT License
+```
+
+## Building the Executable (Optional)
+
+To build a standalone Windows executable:
+
+```bash
+pip install pyinstaller
+pyinstaller K2.spec
+```
+
+The executable will be created in `dist/K2/`.
+
+## Python Dependencies
+
+See [requirements.txt](requirements.txt):
+- **pandas**, **numpy** — Data processing
+- **matplotlib**, **Pillow** — Visualization
+- **reportlab** — PDF generation
+- **pubchempy** — PubChem API access
+- **ctx-python** — EPA CompTox API
+- **molmass** — Molecular weight calculations
+- **requests** — HTTP client
 
 ## Citation
 
 If you use K2 in your research, please cite:
 
-*[Citation information to be added]*
+*Brunet, T. (2026). K2 GC-MS Suspect Screening Pipeline (v3.0.3). GitHub. https://github.com/brunetch123/K2-GCMS-Pipeline*
 
 ## License
 
-*[License information to be added]*
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 ## Support
 
 For bug reports, feature requests, or questions:
-- *[GitHub repository link to be added]*
+- [GitHub Issues](https://github.com/brunetch123/K2-GCMS-Pipeline/issues)
 
 ---
 

@@ -87,6 +87,35 @@ unified_library_*.csv
 # Generated icons (built from PNG by create_icon.py)
 K2Icon.ico
 
+# Archive of old versions (use git history instead)
+scripts/archive/
+
+# Internal dev documentation (not user-facing)
+BUGFIX_LOG.md
+BUILD_CHECKLIST.md
+BUILD_INSTRUCTIONS.md
+GITHUB_RELEASE_DESCRIPTION.md
+GITHUB_ZENODO_SETUP.md
+IMPLEMENTATION_SUMMARY_*.md
+K2_IMPLEMENTATION_SUMMARY.md
+K2_PACKAGING.md
+PRESENTATION_SLIDES_GUIDE.md
+REBUILD_AND_UPLOAD_INSTRUCTIONS.md
+RHRMF_SLIDES_GUIDE.md
+
+# Build scripts (dev-only)
+build_clean.bat
+build_exe.bat
+build_release.bat
+build_restore.bat
+create_distribution.bat
+setup_env.bat
+create_icon.py
+
+# Presentation generators (not part of K2)
+generate_presentation_diagrams.py
+generate_rhrmf_slides.py
+
 # Claude Code
 .claude/
 

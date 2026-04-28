@@ -40,6 +40,10 @@ class ReportGenerator:
             "RT", "RI_Exp", "RI_Lib", "RI_Err", "RI_Err%",
             "Compound_Name", "Formula", "HighRes?", "RHRMF", "RevDot", "FwdDot",
             "MaxAbundance", "BFF_Threshold",
+            # v3.0.4: BFF audit columns — mode used, the rule that produced the
+            # threshold, and (adjusted mode only) the Shapiro-Wilk p-value and
+            # normality decision. Standard-mode rows leave the latter two blank.
+            "BFF_Mode", "BFF_Rule", "BFF_Shapiro_P", "BFF_Normal",
             "IS_Normalized", "IS_Method",  # v2.8.0: IS normalization status
             "CAS", "InChIKey",
             "Source", "Instrument", "Comments",
@@ -154,6 +158,13 @@ class ReportGenerator:
                         cand.dot_product,
                         f"{orig.max_sample_abundance:.0f}",
                         f"{orig.bff_threshold:.0f}",
+                        # v3.0.4: BFF audit fields
+                        getattr(orig, 'bff_mode', 'standard'),
+                        getattr(orig, 'bff_rule', 'mean_3sd'),
+                        ("" if getattr(orig, 'bff_shapiro_p', None) is None
+                         else f"{orig.bff_shapiro_p:.4g}"),
+                        ("" if getattr(orig, 'bff_normal_decision', None) is None
+                         else ("Yes" if orig.bff_normal_decision else "No")),
                         is_normalized,  # v2.8.0
                         is_method,  # v2.8.0
                         cas,

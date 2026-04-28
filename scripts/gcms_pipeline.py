@@ -233,7 +233,8 @@ def run_mzmine(input_folder, output_folder, output_name, threads):
 # ============================================================================
 def run_library_matching(mzmine_folder, output_folder, project_name, library_file,
                          blank_id, ri_cal=None, api_key=None, grouping=None, is_config=None,
-                         surrogate_library=None, surrogate_config=None, reference_samples=None):
+                         surrogate_library=None, surrogate_config=None, reference_samples=None,
+                         bff_mode='standard'):
     """Run library matching using cli.py."""
 
     # Find MZmine output files
@@ -252,6 +253,7 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
     print(f"MSP file:   {msp_file.name}")
     print(f"Library:    {library_file}")
     print(f"Blank ID:   '{blank_id}'")
+    print(f"BFF Mode:   {bff_mode}")
     if ri_cal:
         print(f"RI Cal:     {ri_cal}")
     if grouping:
@@ -291,6 +293,7 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
         "--msp", str(msp_file),
         "--library", str(library_file),
         "--blank-id", blank_id,
+        "--bff-mode", bff_mode,
         "--output", str(output_folder)
     ]
     
@@ -401,6 +404,7 @@ def run_pipeline(args):
     if 'match' in stages:
         print(f"Library:      {library_file}")
         print(f"Blank ID:     '{args.blank_id}'")
+        print(f"BFF Mode:     {args.bff_mode}")
     
     # Validate setup
     print()
@@ -493,7 +497,8 @@ def run_pipeline(args):
             is_config=args.is_config if hasattr(args, 'is_config') else None,
             surrogate_library=args.surrogate_library if hasattr(args, 'surrogate_library') else None,
             surrogate_config=args.surrogate_config if hasattr(args, 'surrogate_config') else None,
-            reference_samples=args.reference_samples if hasattr(args, 'reference_samples') else None
+            reference_samples=args.reference_samples if hasattr(args, 'reference_samples') else None,
+            bff_mode=getattr(args, 'bff_mode', 'standard')
         )
         if result is None:
             return 1
@@ -592,6 +597,14 @@ Examples:
         type=str,
         default='fieldblank',
         help='String to identify blank samples (default: "fieldblank")'
+    )
+
+    parser.add_argument(
+        '--bff-mode',
+        choices=['standard', 'adjusted'],
+        default='standard',
+        help='BFF rule: "standard" (legacy mean+3SD) or "adjusted" (Shapiro-gated MAD-based '
+             'rule, robust to non-normal blanks). Default: standard.'
     )
     
     parser.add_argument(

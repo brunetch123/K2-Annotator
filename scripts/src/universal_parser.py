@@ -4,6 +4,63 @@ import re
 import os
 from src.ri_calibration import RICalibrator
 
+
+# 1.4826 makes MAD a consistent estimator of sigma under normality, so the
+# adjusted-mode robust threshold reduces to mean + 3*SD when blanks truly are
+# normal. MAD is preferred to SD because sparse high-magnitude blank
+# detections inflate SD enough to mask real sample signal.
+_MAD_TO_SIGMA = 1.4826
+_SHAPIRO_ALPHA = 0.05
+
+
+def _adjusted_bff_threshold(blank_vals):
+    """
+    Compute the adjusted-mode BFF threshold for a single feature.
+
+    Returns (threshold, rule, shapiro_p, is_normal) where:
+      - threshold:  float, the BFF cutoff
+      - rule:       'mean_3sd' | 'median_3mad' | 'max_blank' | 'all_zero'
+      - shapiro_p:  Shapiro-Wilk p-value, or None if the test couldn't run
+      - is_normal:  True/False normality decision (False when test couldn't run)
+    """
+    arr = np.asarray(blank_vals, dtype=float) if blank_vals else np.array([], dtype=float)
+
+    # No blanks at all -> no background to subtract.
+    if arr.size == 0 or np.all(arr == 0.0):
+        return 0.0, 'all_zero', None, False
+
+    # Shapiro-Wilk needs n >= 3 and non-zero variance. When it can't run we
+    # treat the feature as non-normal and fall through to MAD/fallback rules.
+    can_test = arr.size >= 3 and float(np.std(arr, ddof=1)) > 0.0
+    p_value = None
+    is_normal = False
+    if can_test:
+        try:
+            from scipy.stats import shapiro
+            _, p_value = shapiro(arr)
+            is_normal = p_value is not None and p_value >= _SHAPIRO_ALPHA
+        except Exception:
+            p_value = None
+            is_normal = False
+
+    if is_normal:
+        thr = float(np.mean(arr) + 3.0 * np.std(arr, ddof=1))
+        return thr, 'mean_3sd', p_value, True
+
+    median = float(np.median(arr))
+    mad = float(np.median(np.abs(arr - median)))
+    if mad > 0.0:
+        thr = median + 3.0 * _MAD_TO_SIGMA * mad
+        return thr, 'median_3mad', p_value, False
+
+    # MAD == 0: majority of blanks tied (typically at zero). A sample peak
+    # should at minimum exceed the largest blank value ever observed.
+    max_blank = float(np.max(arr))
+    if max_blank > 0.0:
+        return max_blank, 'max_blank', p_value, False
+    return 0.0, 'all_zero', p_value, False
+
+
 class Feature:
     """
     Represents a single MS alignment feature (from MS-DIAL or MZmine).
@@ -27,36 +84,64 @@ class Feature:
         self.passed_bff = False
         self.max_sample_abundance = 0.0
 
-    def calculate_bff(self, blank_cols, sample_cols, c_factor=5.0):
+        # BFF audit fields (v3.0.4): mode used, which rule produced the threshold,
+        # and (adjusted mode only) the Shapiro-Wilk p-value and normality decision.
+        self.bff_mode = 'standard'
+        self.bff_rule = 'mean_3sd'
+        self.bff_shapiro_p = None
+        self.bff_normal_decision = None
+
+    def calculate_bff(self, blank_cols, sample_cols, c_factor=5.0, mode='standard'):
         """
         Calculates Blank Feature Filtering (BFF) threshold.
-        Threshold = c * (Mean_Blanks + 3 * Std_Blanks)
-        Passes if Max_Sample_Abundance > Threshold
+
+        mode='standard' (default, preserves existing behavior):
+            Threshold = c_factor * (Mean_Blanks + 3 * Std_Blanks)
+
+        mode='adjusted':
+            Per-feature Shapiro-Wilk normality test (alpha=0.05) on field blanks.
+            - Normal blanks:  Threshold = Mean + 3*SD
+            - Non-normal:     Threshold = Median + 3 * 1.4826 * MAD
+            Fallbacks when MAD == 0:
+                - any blank > 0  -> Threshold = max(blanks)
+                - all zero       -> Threshold = 0
+            Shapiro can't run when all blanks are identical (zero variance) or
+            when n < 3; those features are routed through the fallback rules
+            as non-normal.
+
+        Passes if max_sample_abundance > threshold (strict).
         """
-        # 1. Get Blank Statistics
         blank_vals = [self.abundances.get(b, 0.0) for b in blank_cols]
+        self.bff_mode = mode
 
-        if not blank_vals:
-            # No blanks? Assume 0 background
-            mean_b = 0.0
-            std_b = 0.0
+        if mode == 'adjusted':
+            thr, rule, p, is_normal = _adjusted_bff_threshold(blank_vals)
+            # Apply the same c_factor multiplier the standard rule uses, so the
+            # two modes are on the same scale.
+            self.bff_threshold = c_factor * thr
+            self.bff_rule = rule
+            self.bff_shapiro_p = p
+            self.bff_normal_decision = is_normal
         else:
-            mean_b = np.mean(blank_vals)
-            # ddof=1 for Sample Std Dev (requires at least 2 blanks)
-            std_b = np.std(blank_vals, ddof=1) if len(blank_vals) > 1 else 0.0
+            # Standard mode: existing behavior, unchanged.
+            if not blank_vals:
+                mean_b = 0.0
+                std_b = 0.0
+            else:
+                mean_b = np.mean(blank_vals)
+                # ddof=1 for Sample Std Dev (requires at least 2 blanks)
+                std_b = np.std(blank_vals, ddof=1) if len(blank_vals) > 1 else 0.0
+            self.bff_threshold = c_factor * (mean_b + (3 * std_b))
+            self.bff_rule = 'mean_3sd'
+            self.bff_shapiro_p = None
+            self.bff_normal_decision = None
 
-        # 2. Calculate Threshold
-        self.bff_threshold = c_factor * (mean_b + (3 * std_b))
-
-        # 3. Check Samples
         sample_vals = [self.abundances.get(s, 0.0) for s in sample_cols]
         self.max_sample_abundance = max(sample_vals) if sample_vals else 0.0
 
-        # 4. Result
-        if self.max_sample_abundance > self.bff_threshold:
-            self.passed_bff = True
-        else:
-            self.passed_bff = False
+        # bool(...) so passed_bff is a Python True/False (legacy callers may
+        # rely on identity checks); np.float64 > np.float64 returns np.bool_.
+        self.passed_bff = bool(self.max_sample_abundance > self.bff_threshold)
 
     def __repr__(self):
         return f"<Feature ID={self.id} RT={self.rt:.2f} RI={self.ri:.1f} Peaks={len(self.spectrum)}>"

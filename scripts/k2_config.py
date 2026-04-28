@@ -9,6 +9,32 @@ from pathlib import Path
 from datetime import datetime
 
 
+# Keys whose values are filesystem paths. Validated at load time so a user
+# whose previous install lived at a different location (or who copied their
+# config across machines) doesn't see stale absolute paths populate the GUI.
+PATH_KEYS = (
+    'msconvert_path',
+    'mzmine_path',
+    'mzmine_user_file',
+    'mzmine_batch_file',
+    'library_path',
+    'ri_cal_path',
+)
+
+# Keys excluded from exported .K2config presets:
+#   - epa_api_key: secret; never share across users
+#   - last_input_folder / last_output_folder: per-machine browse history
+#   - window_geometry: per-display state
+# Without this filter, exporting a preset for a colleague would leak the
+# user's API key and bake in paths that are meaningless on their system.
+PRESET_EXCLUDED_KEYS = (
+    'epa_api_key',
+    'last_input_folder',
+    'last_output_folder',
+    'window_geometry',
+)
+
+
 class K2Config:
     """Manages user preferences and configuration presets"""
 
@@ -24,6 +50,7 @@ class K2Config:
             'ri_cal_path': '',
             'epa_api_key': '',
             'blank_identifier': 'fieldblank',
+            'bff_mode': 'standard',
             'last_input_folder': '',
             'last_output_folder': '',
             'window_geometry': '1400x900',
@@ -66,6 +93,26 @@ class K2Config:
                     print(f"Loaded defaults from {self.config_file}")
             except Exception as e:
                 print(f"Warning: Could not load defaults: {e}")
+        self._prune_invalid_paths()
+
+    def _prune_invalid_paths(self):
+        """
+        Reset any PATH_KEYS pointing at files that don't exist on this machine.
+
+        Saved configs frequently outlive the install location they were captured
+        in (repo moved, OneDrive synced to a new machine, software dir
+        reinstalled). Without this, the GUI re-populates with absolute paths
+        the current user can't browse to.
+        """
+        cleared = []
+        for key in PATH_KEYS:
+            val = self.config.get(key, '')
+            if val and not Path(val).exists():
+                self.config[key] = ''
+                cleared.append(key)
+        if cleared:
+            print(f"Cleared {len(cleared)} stale path(s) from saved config: "
+                  f"{', '.join(cleared)}")
 
     def save_defaults(self):
         """Save current configuration as defaults"""
@@ -85,11 +132,18 @@ class K2Config:
         self.config[key] = value
 
     def export_preset(self, filepath):
-        """Export current configuration as a .K2config preset"""
+        """Export current configuration as a .K2config preset.
+
+        Sensitive (API keys) and ephemeral (window geometry, last-used folders)
+        keys are stripped — see PRESET_EXCLUDED_KEYS — so a preset can be
+        shared safely with collaborators.
+        """
+        sanitized = {k: v for k, v in self.config.items()
+                     if k not in PRESET_EXCLUDED_KEYS}
         preset = {
             'format_version': '1.0',
             'created': datetime.now().isoformat(),
-            'config': self.config.copy()
+            'config': sanitized
         }
 
         try:
@@ -101,13 +155,19 @@ class K2Config:
             return False
 
     def load_preset(self, filepath):
-        """Load configuration from a .K2config preset"""
+        """Load configuration from a .K2config preset.
+
+        Path-type keys whose targets don't exist on this machine are blanked
+        after merge, so paths from a colleague's environment don't bleed into
+        the GUI here.
+        """
         try:
             with open(filepath, 'r') as f:
                 preset = json.load(f)
 
             if 'config' in preset:
                 self.config.update(preset['config'])
+                self._prune_invalid_paths()
                 return True
             else:
                 print("Invalid preset format")
@@ -115,6 +175,13 @@ class K2Config:
         except Exception as e:
             print(f"Error loading preset: {e}")
             return False
+
+    def reset_to_defaults(self):
+        """Wipe the in-memory config back to clean factory defaults and
+        persist the cleared state to disk. Useful when the user wants to
+        scrub stale paths/secrets from a previous install."""
+        self.config = self.defaults.copy()
+        self.save_defaults()
 
 
 class K2Project:

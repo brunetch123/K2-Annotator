@@ -69,6 +69,15 @@ Examples:
     )
 
     parser.add_argument(
+        '--bff-mode',
+        choices=['standard', 'adjusted'],
+        default='standard',
+        help='Blank Feature Filtering rule. "standard" (default): mean+3SD applied universally '
+             '(legacy behavior). "adjusted": per-feature Shapiro-Wilk gates between mean+3SD '
+             '(normal blanks) and median+3*1.4826*MAD (non-normal), with max(blanks) / 0 fallbacks.'
+    )
+
+    parser.add_argument(
         '--output', '-o',
         default='results',
         help='Output directory for results. Default: "results"'
@@ -161,6 +170,7 @@ Examples:
     if args.ri_cal:
         print(f"RI Calibration: {args.ri_cal}")
     print(f"Blank ID:       '{args.blank_id}'")
+    print(f"BFF Mode:       {args.bff_mode}")
     print(f"Output Dir:     {args.output}")
     print("="*70)
 
@@ -221,7 +231,8 @@ Examples:
             ri_cal_file=args.ri_cal,
             blank_identifier=args.blank_id,
             is_config=is_config,
-            reference_samples=reference_samples  # v3.0.0
+            reference_samples=reference_samples,  # v3.0.0
+            bff_mode=args.bff_mode  # v3.0.4
         )
 
         # Load data

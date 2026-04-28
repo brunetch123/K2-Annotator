@@ -20,7 +20,7 @@ class MatchCandidate:
 
 class MatchingEngine:
     def __init__(self, data_dir, quant_file, msp_file, library_file, ri_cal_file=None, blank_identifier="fieldblank",
-                 sample_types=None, is_config=None, reference_samples=None):
+                 sample_types=None, is_config=None, reference_samples=None, bff_mode='standard'):
         self.data_dir = data_dir
         self.quant_file = quant_file  # Changed from area_file to quant_file (more generic)
         self.msp_file = msp_file
@@ -34,6 +34,12 @@ class MatchingEngine:
 
         # v3.0.0: Reference samples to exclude from suspect screening
         self.reference_samples = set(reference_samples) if reference_samples else set()
+
+        # v3.0.4: BFF rule selector — 'standard' (legacy mean+3SD) or 'adjusted'
+        # (Shapiro-gated MAD-based rule). Default preserves existing outputs.
+        if bff_mode not in ('standard', 'adjusted'):
+            raise ValueError(f"bff_mode must be 'standard' or 'adjusted', got {bff_mode!r}")
+        self.bff_mode = bff_mode
 
         self.parser = None  # Changed from msdial_parser to parser (universal)
         self.library_parser = None
@@ -98,14 +104,15 @@ class MatchingEngine:
 
         # 5. Run BFF (Pre-requisite for matching) - Uses normalized abundances if IS was applied
         # v3.0.0: Exclude reference samples from BFF calculation for suspect screening
-        print("\nRunning BFF Filter...")
+        # v3.0.4: BFF mode (standard|adjusted) is plumbed in from caller.
+        print(f"\nRunning BFF Filter (mode={self.bff_mode})...")
         sample_cols_for_bff = [s for s in self.parser.sample_columns if s not in self.reference_samples]
-        
+
         if self.reference_samples:
             print(f"  Excluding {len(self.reference_samples)} reference samples from BFF calculation")
-        
+
         for f in features:
-            f.calculate_bff(self.parser.blank_columns, sample_cols_for_bff)
+            f.calculate_bff(self.parser.blank_columns, sample_cols_for_bff, mode=self.bff_mode)
 
         # 6. Load Library
         print("Loading Library...")

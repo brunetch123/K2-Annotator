@@ -2,6 +2,29 @@
 
 All notable changes to the K2 GC-MS Suspect Screening Pipeline will be documented in this file.
 
+## [3.0.4] - 2026-04-28
+
+### Added
+- **Adjusted BFF Mode**: New `bff_mode={standard,adjusted}` option for Blank Feature Filtering. Standard mode preserves existing `c_factor * (mean + 3*SD)` behavior unchanged. Adjusted mode runs a per-feature Shapiro-Wilk normality test (alpha=0.05) on the field blanks and selects between `mean + 3*SD` (normal blanks) and `median + 3 * 1.4826 * MAD` (non-normal). The 1.4826 scaling makes MAD a consistent estimator of sigma under normality, so adjusted mode reduces to the standard rule when blanks truly are normal — but is robust to sparse high-magnitude blank detections that would otherwise inflate the SD enough to mask real sample signal.
+- **BFF Fallback Rules** (adjusted mode): When MAD = 0 but at least one blank is nonzero, threshold falls back to `max(blanks)`. When all blanks are zero, threshold is 0. Features whose blanks are all identical (zero variance, Shapiro can't run) are routed through these fallbacks as non-normal.
+- **CLI / Pipeline Flag**: `--bff-mode {standard,adjusted}` added to both `cli.py` and `gcms_pipeline.py` (default: `standard`).
+- **GUI Control**: Radio-button selector for BFF mode on the Analysis Parameters screen.
+- **CSV Audit Columns**: Matches CSV now records `BFF_Mode`, `BFF_Rule`, `BFF_Shapiro_P`, and `BFF_Normal` per feature for downstream auditing. Existing `BFF_Threshold` column is unchanged.
+- **`reset_to_defaults()` helper** in `K2Config` for scrubbing stale paths and secrets from a previous install.
+
+### Changed
+- **Saved-Config Path Validation**: On every load of `~/.k2/k2_defaults.json` (and on `load_preset`), path-type keys (`msconvert_path`, `mzmine_path`, `mzmine_user_file`, `mzmine_batch_file`, `library_path`, `ri_cal_path`) are checked against the filesystem and cleared if the target no longer exists. Prevents stale absolute paths from a previous install location from re-populating the GUI.
+- **Preset Export Hygiene**: `export_preset()` now strips sensitive and per-machine keys (`epa_api_key`, `last_input_folder`, `last_output_folder`, `window_geometry`) before writing, so a `.K2config` preset can be shared with collaborators without leaking API keys or environment-specific state.
+
+### Why This Change
+- The old universal `mean + 3*SD` rule assumes normally distributed blanks. In practice, sparse high-magnitude detections in otherwise-clean field blanks inflate the SD enough that the threshold exceeds legitimate sample signal, filtering out real detections. Adjusted mode preserves the strict rule where blanks really are normal but switches to a MAD-based robust estimator otherwise.
+- Saved configs frequently outlive their install location (repo moved, OneDrive synced to a new machine, software dir reinstalled). Path validation at load time keeps the GUI in a clean, browseable state instead of silently retaining dead absolute paths.
+
+### Backward Compatibility
+- Default `bff_mode` is `standard`; existing analyses produce byte-identical thresholds. Audit columns are appended to the CSV without disturbing existing column order.
+
+---
+
 ## [3.0.3] - 2026-01-31
 
 ### Fixed

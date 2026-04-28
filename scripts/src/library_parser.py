@@ -50,7 +50,18 @@ class LibraryParser:
         Stream reads the CSV library.
         """
 
-        csv.field_size_limit(sys.maxsize)
+        # Bump CSV field size cap to handle very long peaks_json columns.
+        # sys.maxsize is 2**63-1 on 64-bit Python, but csv.field_size_limit
+        # takes a C long, which is 32-bit on Windows even in 64-bit builds.
+        # Halve until it fits.
+        max_int = sys.maxsize
+        while True:
+            try:
+                csv.field_size_limit(max_int)
+                break
+            except OverflowError:
+                max_int = int(max_int / 10)
+
 
         valid_count = 0
         skipped_count = 0

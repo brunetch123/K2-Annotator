@@ -234,7 +234,7 @@ def run_mzmine(input_folder, output_folder, output_name, threads):
 def run_library_matching(mzmine_folder, output_folder, project_name, library_file,
                          blank_id, ri_cal=None, api_key=None, grouping=None, is_config=None,
                          surrogate_library=None, surrogate_config=None, reference_samples=None,
-                         bff_mode='standard'):
+                         bff_mode='standard', bff_c_factor=5.0):
     """Run library matching using cli.py."""
 
     # Find MZmine output files
@@ -254,6 +254,7 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
     print(f"Library:    {library_file}")
     print(f"Blank ID:   '{blank_id}'")
     print(f"BFF Mode:   {bff_mode}")
+    print(f"BFF c:      {bff_c_factor}")
     if ri_cal:
         print(f"RI Cal:     {ri_cal}")
     if grouping:
@@ -294,6 +295,7 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
         "--library", str(library_file),
         "--blank-id", blank_id,
         "--bff-mode", bff_mode,
+        "--bff-c-factor", str(bff_c_factor),
         "--output", str(output_folder)
     ]
     
@@ -405,6 +407,7 @@ def run_pipeline(args):
         print(f"Library:      {library_file}")
         print(f"Blank ID:     '{args.blank_id}'")
         print(f"BFF Mode:     {args.bff_mode}")
+        print(f"BFF c-factor: {getattr(args, 'bff_c_factor', 5.0)}")
     
     # Validate setup
     print()
@@ -498,7 +501,8 @@ def run_pipeline(args):
             surrogate_library=args.surrogate_library if hasattr(args, 'surrogate_library') else None,
             surrogate_config=args.surrogate_config if hasattr(args, 'surrogate_config') else None,
             reference_samples=args.reference_samples if hasattr(args, 'reference_samples') else None,
-            bff_mode=getattr(args, 'bff_mode', 'standard')
+            bff_mode=getattr(args, 'bff_mode', 'standard'),
+            bff_c_factor=getattr(args, 'bff_c_factor', 5.0)
         )
         if result is None:
             return 1
@@ -606,7 +610,16 @@ Examples:
         help='BFF rule: "standard" (legacy mean+3SD) or "adjusted" (Shapiro-gated MAD-based '
              'rule, robust to non-normal blanks). Default: standard.'
     )
-    
+
+    parser.add_argument(
+        '--bff-c-factor',
+        type=float,
+        default=5.0,
+        help='Multiplier on the BFF threshold rule (e.g. 5 -> 5*(mean+3SD)). '
+             'Default: 5.0 (legacy). Lower values (1, 2) relax the filter.'
+    )
+
+
     parser.add_argument(
         '--ri-cal',
         type=str,

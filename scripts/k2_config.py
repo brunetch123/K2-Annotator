@@ -51,6 +51,7 @@ class K2Config:
             'epa_api_key': '',
             'blank_identifier': 'fieldblank',
             'bff_mode': 'standard',
+            'bff_c_factor': 5.0,
             'last_input_folder': '',
             'last_output_folder': '',
             'window_geometry': '1400x900',

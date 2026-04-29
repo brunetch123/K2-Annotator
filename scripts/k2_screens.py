@@ -2160,6 +2160,18 @@ class AnalysisParamsScreen(BaseScreen):
         )
         bff_hint.pack(anchor='w', pady=(5, 0))
 
+        # BFF threshold multiplier (c-factor)
+        cfactor_row = ttk.Frame(bff_frame)
+        cfactor_row.pack(fill='x', pady=(10, 0))
+        ttk.Label(cfactor_row, text="Threshold multiplier (c):").pack(side='left')
+        self.bff_cfactor_var = tk.StringVar(value='5.0')
+        ttk.Entry(cfactor_row, textvariable=self.bff_cfactor_var, width=8).pack(side='left', padx=(8, 0))
+        ttk.Label(
+            cfactor_row,
+            text="Applied as c*(threshold). Default 5.0 = legacy. Try 1 or 2 to relax.",
+            foreground='gray'
+        ).pack(side='left', padx=(8, 0))
+
         # Save preset button
         preset_frame = ttk.Frame(content)
         preset_frame.pack(fill='x', pady=20)
@@ -2189,6 +2201,7 @@ class AnalysisParamsScreen(BaseScreen):
         self.api_var.set(self.app.pipeline_config.get('epa_api_key', ''))
         self.blank_var.set(self.app.pipeline_config.get('blank_identifier', 'fieldblank'))
         self.bff_mode_var.set(self.app.pipeline_config.get('bff_mode', 'standard'))
+        self.bff_cfactor_var.set(str(self.app.pipeline_config.get('bff_c_factor', 5.0)))
 
     def browse_library(self):
         filepath = filedialog.askopenfilename(
@@ -2219,12 +2232,24 @@ class AnalysisParamsScreen(BaseScreen):
             messagebox.showerror("Error", "Please enter a blank identifier")
             return
 
+        # Validate BFF c-factor (must be a positive number)
+        try:
+            cfactor = float(self.bff_cfactor_var.get())
+        except (TypeError, ValueError):
+            messagebox.showerror("Error",
+                f"BFF c-factor must be a number (got '{self.bff_cfactor_var.get()}')")
+            return
+        if cfactor <= 0:
+            messagebox.showerror("Error", f"BFF c-factor must be > 0 (got {cfactor})")
+            return
+
         # Save to config
         self.app.pipeline_config['library_path'] = self.library_var.get()
         self.app.pipeline_config['ri_cal_path'] = self.ri_var.get()
         self.app.pipeline_config['epa_api_key'] = self.api_var.get()
         self.app.pipeline_config['blank_identifier'] = self.blank_var.get()
         self.app.pipeline_config['bff_mode'] = self.bff_mode_var.get()
+        self.app.pipeline_config['bff_c_factor'] = cfactor
 
         # Save defaults
         self.app.app_config.set('library_path', self.library_var.get())
@@ -2232,6 +2257,7 @@ class AnalysisParamsScreen(BaseScreen):
         self.app.app_config.set('epa_api_key', self.api_var.get())
         self.app.app_config.set('blank_identifier', self.blank_var.get())
         self.app.app_config.set('bff_mode', self.bff_mode_var.get())
+        self.app.app_config.set('bff_c_factor', cfactor)
         self.app.app_config.save_defaults()
 
         # v3.0.0: Always go to surrogate config screen next
@@ -2654,6 +2680,7 @@ class ExecutionScreen(BaseScreen):
             cmd.extend(['--library', config['library_path']])
             cmd.extend(['--blank-id', config['blank_identifier']])
             cmd.extend(['--bff-mode', config.get('bff_mode', 'standard')])
+            cmd.extend(['--bff-c-factor', str(config.get('bff_c_factor', 5.0))])
             cmd.extend(['--output', config['output_folder']])
 
             if config.get('ri_cal_path'):

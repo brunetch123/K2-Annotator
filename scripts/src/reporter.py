@@ -43,7 +43,7 @@ class ReportGenerator:
             # v3.0.4: BFF audit columns — mode used, the rule that produced the
             # threshold, and (adjusted mode only) the Shapiro-Wilk p-value and
             # normality decision. Standard-mode rows leave the latter two blank.
-            "BFF_Mode", "BFF_Rule", "BFF_Shapiro_P", "BFF_Normal",
+            "BFF_Mode", "BFF_Rule", "BFF_Shapiro_P", "BFF_Normal", "BFF_CFactor",
             "IS_Normalized", "IS_Method",  # v2.8.0: IS normalization status
             "CAS", "InChIKey",
             "Source", "Instrument", "Comments",
@@ -165,6 +165,7 @@ class ReportGenerator:
                          else f"{orig.bff_shapiro_p:.4g}"),
                         ("" if getattr(orig, 'bff_normal_decision', None) is None
                          else ("Yes" if orig.bff_normal_decision else "No")),
+                        f"{getattr(orig, 'bff_c_factor', 5.0):g}",  # v3.0.5
                         is_normalized,  # v2.8.0
                         is_method,  # v2.8.0
                         cas,

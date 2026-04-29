@@ -13,6 +13,17 @@ from datetime import datetime
 from src.matching_engine import MatchingEngine
 from src.reporter import ReportGenerator
 
+
+def _positive_float(value):
+    """argparse type for a strictly positive float."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a number, got {value!r}")
+    if f <= 0:
+        raise argparse.ArgumentTypeError(f"must be > 0, got {f}")
+    return f
+
 def main():
     parser = argparse.ArgumentParser(
         description="MS-DIAL/MZmine Level 2 Compound Annotation Pipeline",
@@ -75,6 +86,14 @@ Examples:
         help='Blank Feature Filtering rule. "standard" (default): mean+3SD applied universally '
              '(legacy behavior). "adjusted": per-feature Shapiro-Wilk gates between mean+3SD '
              '(normal blanks) and median+3*1.4826*MAD (non-normal), with max(blanks) / 0 fallbacks.'
+    )
+
+    parser.add_argument(
+        '--bff-c-factor',
+        type=_positive_float,
+        default=5.0,
+        help='Multiplier applied to the BFF threshold rule, regardless of mode. '
+             'Default: 5.0 (legacy). Lower values (e.g. 1, 2) relax the filter.'
     )
 
     parser.add_argument(
@@ -171,6 +190,7 @@ Examples:
         print(f"RI Calibration: {args.ri_cal}")
     print(f"Blank ID:       '{args.blank_id}'")
     print(f"BFF Mode:       {args.bff_mode}")
+    print(f"BFF c-factor:   {args.bff_c_factor}")
     print(f"Output Dir:     {args.output}")
     print("="*70)
 
@@ -232,7 +252,8 @@ Examples:
             blank_identifier=args.blank_id,
             is_config=is_config,
             reference_samples=reference_samples,  # v3.0.0
-            bff_mode=args.bff_mode  # v3.0.4
+            bff_mode=args.bff_mode,  # v3.0.4
+            bff_c_factor=args.bff_c_factor  # v3.0.5
         )
 
         # Load data

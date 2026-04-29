@@ -90,6 +90,8 @@ class Feature:
         self.bff_rule = 'mean_3sd'
         self.bff_shapiro_p = None
         self.bff_normal_decision = None
+        # v3.0.5: multiplier applied to the rule's raw threshold (legacy 5.0).
+        self.bff_c_factor = 5.0
 
     def calculate_bff(self, blank_cols, sample_cols, c_factor=5.0, mode='standard'):
         """
@@ -111,8 +113,12 @@ class Feature:
 
         Passes if max_sample_abundance > threshold (strict).
         """
+        if c_factor <= 0:
+            raise ValueError(f"c_factor must be > 0, got {c_factor!r}")
+
         blank_vals = [self.abundances.get(b, 0.0) for b in blank_cols]
         self.bff_mode = mode
+        self.bff_c_factor = float(c_factor)
 
         if mode == 'adjusted':
             thr, rule, p, is_normal = _adjusted_bff_threshold(blank_vals)

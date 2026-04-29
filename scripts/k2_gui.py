@@ -76,6 +76,7 @@ class K2Application(tk.Tk):
             'epa_api_key': self.app_config.get('epa_api_key', ''),
             'blank_identifier': self.app_config.get('blank_identifier', 'fieldblank'),
             'bff_mode': self.app_config.get('bff_mode', 'standard'),
+            'bff_c_factor': self.app_config.get('bff_c_factor', 5.0),
         }
 
         # Initialize screens
@@ -321,7 +322,8 @@ class K2Application(tk.Tk):
                 # Update pipeline config with loaded values
                 for key in ['msconvert_path', 'mzmine_path', 'mzmine_user_file',
                            'mzmine_batch_file', 'mzmine_threads', 'library_path',
-                           'ri_cal_path', 'epa_api_key', 'blank_identifier', 'bff_mode']:
+                           'ri_cal_path', 'epa_api_key', 'blank_identifier', 'bff_mode',
+                           'bff_c_factor']:
                     self.pipeline_config[key] = self.app_config.get(key, '')
 
                 messagebox.showinfo("Success", "Preset loaded successfully")

@@ -7,14 +7,19 @@ from src.structure_helper import StructureHelper  # v2.7.0: replaced Visualizer
 
 class ReportGenerator:
     def __init__(self, results, features, output_dir="results", api_key=None, sample_columns=None, is_config=None,
-                 surrogate_analyzer=None):
+                 surrogate_analyzer=None, blank_columns=None):
         self.results = results
         self.feature_map = {f.id: f for f in features}
         self.output_dir = output_dir
-        self.sample_columns = sample_columns or []  # List of sample column names for abundance export
+        self.sample_columns = sample_columns or []  # All export columns (blanks + samples) for the main per-match CSV
         self.api_key = api_key
         self.is_config = is_config or {}  # IS normalization configuration (v2.8.0)
         self.surrogate_analyzer = surrogate_analyzer  # v3.0.0: Surrogate analysis results
+        # v3.0.6: Split blank vs sample columns so the summary tables can
+        # compute detection frequency over true samples only.
+        self.blank_columns = list(blank_columns or [])
+        self.true_sample_columns = [c for c in self.sample_columns
+                                    if c not in self.blank_columns]
 
         # Initialize structure helper for PDF generation (v2.7.0)
         temp_assets_dir = os.path.join(self.output_dir, "temp_assets")
@@ -197,13 +202,57 @@ class ReportGenerator:
         print(f"CSV Report generated: {filepath}")
         return filepath
 
+    def generate_summary_csvs(self, base_name="summary"):
+        """Write the two overview CSVs (feature detection + match) and
+        return their paths. Companions to the per-match CSV/PDF.
+
+        v3.0.6.
+        """
+        from src.summary_tables import (
+            build_feature_summary, build_match_summary, write_csv,
+        )
+
+        feat_headers, feat_rows = build_feature_summary(
+            self.feature_map, self.true_sample_columns, self.blank_columns
+        )
+        feat_path = os.path.join(
+            self.output_dir, f"{base_name}_feature_summary.csv"
+        )
+        write_csv(feat_path, feat_headers, feat_rows)
+
+        match_headers, match_rows = build_match_summary(
+            self.results, self.feature_map
+        )
+        match_path = os.path.join(
+            self.output_dir, f"{base_name}_match_summary.csv"
+        )
+        write_csv(match_path, match_headers, match_rows)
+
+        return feat_path, match_path
+
     def generate_pdf(self, filename="Level2_Report.pdf"):
         filepath = os.path.join(self.output_dir, filename)
         c = canvas.Canvas(filepath, pagesize=letter)
         width, height = letter
-        
+
         print("Generating PDF Report...")
-        
+
+        # v3.0.6: Render the two summary tables as the first pages so a
+        # reader sees the overview before flipping through per-match
+        # detail pages. Drawn in landscape; orientation is restored
+        # before the per-match loop.
+        try:
+            from src.summary_tables import render_summary_pdf_pages
+            render_summary_pdf_pages(
+                c,
+                feature_map=self.feature_map,
+                results=self.results,
+                sample_columns=self.true_sample_columns,
+                blank_columns=self.blank_columns,
+            )
+        except Exception as e:
+            print(f"[WARNING] Could not render summary tables in PDF: {e}")
+
         count = 0
         
         for feat_id, candidates in self.results.items():

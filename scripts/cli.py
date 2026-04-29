@@ -336,7 +336,8 @@ Examples:
             api_key=args.api_key,
             sample_columns=all_samples,
             is_config=is_config,  # v2.8.0: Pass IS config for report generation
-            surrogate_analyzer=surrogate_analyzer  # v3.0.0: Pass surrogate results for PDF
+            surrogate_analyzer=surrogate_analyzer,  # v3.0.0: Pass surrogate results for PDF
+            blank_columns=engine.parser.blank_columns  # v3.0.6: for summary detection-frequency stats
         )
 
         # Note: Statistics removed in v2.7.0 - export CSV for external analysis
@@ -345,6 +346,13 @@ Examples:
             print("  - Generating CSV report...")
             csv_file = reporter.generate_csv(filename=csv_filename)
             print(f"    [OK] CSV saved: {csv_file}")
+
+            # v3.0.6: Companion summary tables.
+            print("  - Generating summary CSVs (feature + match)...")
+            summary_base = f"{folder_name}_{date_stamp}"
+            feat_csv, match_csv = reporter.generate_summary_csvs(base_name=summary_base)
+            print(f"    [OK] Feature summary: {feat_csv}")
+            print(f"    [OK] Match summary:   {match_csv}")
 
         if not args.csv_only:
             print("  - Generating PDF report...")

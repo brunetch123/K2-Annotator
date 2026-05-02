@@ -2,6 +2,39 @@
 
 All notable changes to the K2 GC-MS Suspect Screening Pipeline will be documented in this file.
 
+## [3.0.6] - 2026-04-29
+
+### Added
+- **Feature Detection Summary** (CSV + PDF): every observed feature with detection frequency (% of true samples with abundance > 0), per-sample abundances, and BFF pass/fail. Blanks are excluded from the frequency statistic but their abundances are still echoed for QA.
+- **Match Summary** (CSV + PDF): every library match keyed back to its feature, with RevDot/FwdDot/RHRMF and RI deltas. One row per (feature, candidate) pair.
+- **Landscape PDF front pages**: both summary tables are rendered as the first pages of the report, in landscape orientation, before the per-match detail pages.
+- **`blank_columns` parameter** added to `ReportGenerator` so the summary tables can compute detection frequency over true samples only (`engine.parser.blank_columns` is now passed in from the CLI).
+
+### Fixed
+- **`generate_pdf` return value**: the method now returns the saved file path (it previously returned `None`, causing the CLI to print `[OK] PDF saved: None`).
+- **PDF orientation restoration**: `render_summary_pdf_pages` now restores portrait orientation via a `finally` block, so a partial failure mid-render can no longer leave the canvas stuck in landscape and corrupt the per-match pages.
+- **Summary table header overlap**: PDF column headers were drawn over each other when verbose names exceeded the column width. Replaced with abbreviated display headers and proportional column widths sized for content. CSV headers remain fully descriptive.
+
+### Files
+- New: `scripts/src/summary_tables.py` (table-building, CSV writing, PDF rendering)
+
+---
+
+## [3.0.5] - 2026-04-29
+
+### Added
+- **`--bff-c-factor` flag** (CLI, pipeline wrapper, GUI): the multiplier in front of the BFF threshold rule is now user-configurable. Applies to both `standard` and `adjusted` modes, so the two stay on the same scale. Validated as a positive number at every boundary; default remains `5.0` to preserve existing outputs.
+- **GUI control**: numeric entry for the c-factor on the Analysis Parameters screen, alongside the existing BFF mode radio buttons. Invalid (non-numeric, ≤ 0) values are rejected with a dialog before the user can advance.
+- **`BFF_CFactor` audit column** in the per-match CSV: records the multiplier used for each row alongside the existing BFF_Mode/BFF_Rule audit fields.
+
+### Why This Change
+- The legacy 5× multiplier on `(mean + 3·SD)` is conservative for some sample sets. Allowing the user to choose 1×, 2×, etc. relaxes the filter when blanks are clean enough that 5× masks real low-magnitude signals — without removing the legacy default.
+
+### Backward Compatibility
+- Default `bff_c_factor` is `5.0`; existing analyses produce byte-identical thresholds. Audit column is appended without disturbing existing column order.
+
+---
+
 ## [3.0.4] - 2026-04-28
 
 ### Added

@@ -427,3 +427,4 @@ class ReportGenerator:
 
         c.save()
         print(f"\nPDF Report saved: {filepath}")
+        return filepath

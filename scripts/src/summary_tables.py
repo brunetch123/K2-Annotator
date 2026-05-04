@@ -256,38 +256,51 @@ def render_summary_pdf_pages(c, feature_map, results, sample_columns,
 
     c.setPageSize(landscape_size)
     try:
-        # ---- Table 1: Feature Detection Summary ----
+        # ---- Table 1a: Feature Detection Summary (stat overview) ----
+        # The stat overview always fits on a landscape page regardless of
+        # how many samples were run. The per-sample abundance breakdown
+        # is rendered on subsequent pages, chunked horizontally — a
+        # 1500-feature × 150-sample dataset can't fit per-sample columns
+        # on one page without rendering as unreadable hairlines.
         feat_headers, feat_rows = build_feature_summary(
             feature_map, sample_columns, blank_columns
         )
         n_samples = len(sample_columns or [])
+        n_blanks = len(blank_columns or [])
+        n_fixed = len(_FEATURE_PDF_HEADERS_FIXED)  # stat columns
+        sample_cols_in_table = feat_headers[n_fixed:]  # "Abundance_<name>"
+        sample_display = [h.replace("Abundance_", "") for h in sample_cols_in_table]
+
+        # Slice each row into its stat columns (everything before the
+        # abundance grid) and its abundance columns.
+        stat_rows = [r[:n_fixed] for r in feat_rows]
+        abund_rows = [r[n_fixed:] for r in feat_rows]
+
         feat_subtitle = (
             f"{len(feat_rows)} features. Detection frequency = % of "
             f"{n_samples} sample column(s) with abundance > 0. "
-            f"Blank columns are echoed but excluded from the statistic."
+            f"Blanks excluded from the statistic. "
+            f"Per-sample abundances are in the feature summary CSV."
         )
-        # Build display headers: short labels for the fixed columns, then
-        # one column per blank/sample with the abundance prefix stripped
-        # so the column header is just the sample name.
-        n_fixed = len(_FEATURE_PDF_HEADERS_FIXED)  # number of stat columns
-        sample_cols_in_table = feat_headers[n_fixed:]  # "Abundance_<name>"
-        sample_display = [h.replace("Abundance_", "") for h in sample_cols_in_table]
-        feat_display_headers = list(_FEATURE_PDF_HEADERS_FIXED) + sample_display
-        # Proportional widths: fixed columns use defined weights, sample
-        # columns share the remaining width equally.
-        n_samples_in_table = len(sample_cols_in_table)
-        sample_weight = 1.0
-        feat_weights = (list(_FEATURE_FIXED_COL_WEIGHTS)
-                        + [sample_weight] * n_samples_in_table)
-        feat_widths = _proportional_widths(feat_weights, avail_w)
+        stat_widths = _proportional_widths(
+            list(_FEATURE_FIXED_COL_WEIGHTS), avail_w
+        )
         _draw_table_paginated(
             c, lw, lh,
             "Feature Detection Summary",
             feat_subtitle,
-            feat_display_headers, feat_rows,
-            col_widths=feat_widths,
-            font_size=6, rows_per_page=36,
+            list(_FEATURE_PDF_HEADERS_FIXED), stat_rows,
+            col_widths=stat_widths,
+            font_size=7, rows_per_page=36,
         )
+
+        # The per-sample abundance breakdown is intentionally NOT
+        # rendered in the PDF. With realistic study sizes (e.g. 1866
+        # features × 150 samples), per-sample columns either compress
+        # into unreadable hairlines on one page, or fan out into
+        # hundreds of horizontally-chunked pages — neither is useful as
+        # a flip-through report. The full grid is preserved row-for-row
+        # in the *_feature_summary.csv companion file.
 
         # ---- Table 2: Match Summary ----
         _, match_rows = build_match_summary(results, feature_map)

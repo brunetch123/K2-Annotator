@@ -3036,7 +3036,21 @@ class ResultsScreen(BaseScreen):
                     latest_results_dir = max(subfolders, key=os.path.getmtime)
                     csv_files = list(latest_results_dir.glob("*.csv"))
                     if csv_files:
-                        csv_file = str(csv_files[0])
+                        # v3.0.6: the output dir now contains *_matches_*.csv
+                        # plus *_feature_summary.csv and *_match_summary.csv.
+                        # We must load the matches file specifically — the
+                        # summary CSVs have no Compound_Name column and would
+                        # populate the tree with 1866 "Unknown" rows.
+                        matches_files = [f for f in csv_files
+                                         if "_matches_" in f.name
+                                         and "_summary" not in f.name]
+                        # Defensive fallback: any non-summary CSV.
+                        if not matches_files:
+                            matches_files = [f for f in csv_files
+                                             if "_summary" not in f.name]
+                        if not matches_files:
+                            matches_files = csv_files
+                        csv_file = str(matches_files[0])
 
         if csv_file and Path(csv_file).exists():
             try:

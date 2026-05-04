@@ -5,12 +5,14 @@ All notable changes to the K2 GC-MS Suspect Screening Pipeline will be documente
 ## [3.0.6] - 2026-04-29
 
 ### Added
-- **Feature Detection Summary** (CSV + PDF): every observed feature with detection frequency (% of true samples with abundance > 0), per-sample abundances, and BFF pass/fail. Blanks are excluded from the frequency statistic but their abundances are still echoed for QA.
+- **Feature Detection Summary** (CSV + PDF): every observed feature with detection frequency (% of true samples with abundance > 0), per-sample abundances, and BFF pass/fail. Blanks are excluded from the frequency statistic but their abundances are still echoed for QA in the CSV.
 - **Match Summary** (CSV + PDF): every library match keyed back to its feature, with RevDot/FwdDot/RHRMF and RI deltas. One row per (feature, candidate) pair.
 - **Landscape PDF front pages**: both summary tables are rendered as the first pages of the report, in landscape orientation, before the per-match detail pages.
 - **`blank_columns` parameter** added to `ReportGenerator` so the summary tables can compute detection frequency over true samples only (`engine.parser.blank_columns` is now passed in from the CLI).
 
 ### Fixed
+- **GUI Results screen showing all "Unknown"**: The Results-screen CSV picker globbed `*.csv` and took `[0]`, which after v3.0.6 could pick `*_feature_summary.csv` (1866 rows, no `Compound_Name` column) instead of `*_matches_*.csv`. Now the picker explicitly prefers the matches file and ignores summary files.
+- **PDF feature summary unreadable on real-sized studies**: With ~1800 features × ~150 samples, the per-sample abundance grid compressed into hairline columns or fanned out into hundreds of horizontally-chunked pages. The PDF now shows the stat overview only (Feat #, RT, RI, Det %, Det N, Tot N, Mean Abd, Max Abd, BFF) — the full per-sample grid lives in the companion CSV, where spreadsheet column widening makes it usable.
 - **`generate_pdf` return value**: the method now returns the saved file path (it previously returned `None`, causing the CLI to print `[OK] PDF saved: None`).
 - **PDF orientation restoration**: `render_summary_pdf_pages` now restores portrait orientation via a `finally` block, so a partial failure mid-render can no longer leave the canvas stuck in landscape and corrupt the per-match pages.
 - **Summary table header overlap**: PDF column headers were drawn over each other when verbose names exceeded the column width. Replaced with abbreviated display headers and proportional column widths sized for content. CSV headers remain fully descriptive.

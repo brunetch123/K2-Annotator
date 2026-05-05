@@ -27,17 +27,25 @@ from reportlab.platypus import Table, TableStyle
 # Data preparation
 # ----------------------------------------------------------------------
 
-def build_feature_summary(feature_map, sample_columns, blank_columns=None):
+def build_feature_summary(feature_map, sample_columns, blank_columns=None,
+                          include_ids=None):
     """Return (headers, rows) for the per-feature detection summary.
 
     Frequency / mean / max are computed over `sample_columns` only.
     Blank-column abundances are still echoed in the per-column section
     so users can spot blank-only features at a glance.
+
+    `include_ids`: optional iterable of feature IDs to restrict the
+    output to. When None, every feature in `feature_map` is emitted.
+    The PDF version of this table passes the matched-feature ID set so
+    only Level-2 hits show up; the CSV companion typically passes None
+    so the full feature catalog is preserved for QA.
     """
     blank_columns = list(blank_columns or [])
     sample_columns = list(sample_columns or [])
     all_cols = blank_columns + sample_columns
     n_samples = len(sample_columns)
+    include_set = set(include_ids) if include_ids is not None else None
 
     headers = [
         "Feature_ID", "RT", "RI",
@@ -48,6 +56,8 @@ def build_feature_summary(feature_map, sample_columns, blank_columns=None):
 
     rows = []
     for feat in sorted(feature_map.values(), key=lambda x: x.id):
+        if include_set is not None and feat.id not in include_set:
+            continue
         sample_abunds = [float(feat.abundances.get(s, 0.0)) for s in sample_columns]
         all_abunds = [float(feat.abundances.get(c, 0.0)) for c in all_cols]
 
@@ -257,13 +267,15 @@ def render_summary_pdf_pages(c, feature_map, results, sample_columns,
     c.setPageSize(landscape_size)
     try:
         # ---- Table 1a: Feature Detection Summary (stat overview) ----
-        # The stat overview always fits on a landscape page regardless of
-        # how many samples were run. The per-sample abundance breakdown
-        # is rendered on subsequent pages, chunked horizontally — a
-        # 1500-feature × 150-sample dataset can't fit per-sample columns
-        # on one page without rendering as unreadable hairlines.
+        # PDF version is restricted to features that actually produced
+        # at least one Level-2 match — a flip-through reader doesn't
+        # need the full feature catalog (often 1500+ rows of unmatched
+        # features). The companion *_feature_summary.csv keeps every
+        # feature for QA; this table is just the matched subset.
+        matched_ids = set(results.keys()) if results else set()
         feat_headers, feat_rows = build_feature_summary(
-            feature_map, sample_columns, blank_columns
+            feature_map, sample_columns, blank_columns,
+            include_ids=matched_ids,
         )
         n_samples = len(sample_columns or [])
         n_blanks = len(blank_columns or [])
@@ -277,10 +289,10 @@ def render_summary_pdf_pages(c, feature_map, results, sample_columns,
         abund_rows = [r[n_fixed:] for r in feat_rows]
 
         feat_subtitle = (
-            f"{len(feat_rows)} features. Detection frequency = % of "
-            f"{n_samples} sample column(s) with abundance > 0. "
-            f"Blanks excluded from the statistic. "
-            f"Per-sample abundances are in the feature summary CSV."
+            f"{len(feat_rows)} feature(s) with at least one Level-2 match. "
+            f"Detection frequency = % of {n_samples} sample column(s) with "
+            f"abundance > 0; blanks excluded. "
+            f"The feature summary CSV has the full catalog plus per-sample abundances."
         )
         stat_widths = _proportional_widths(
             list(_FEATURE_FIXED_COL_WEIGHTS), avail_w

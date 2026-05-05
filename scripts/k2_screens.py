@@ -2806,7 +2806,21 @@ class ExecutionScreen(BaseScreen):
                     pdf_files = list(latest_results_dir.glob("*.pdf"))
 
                     if csv_files:
-                        csv_file = csv_files[0]
+                        # v3.0.6: prefer the *_matches_*.csv file. The output
+                        # folder also contains *_feature_summary.csv and
+                        # *_match_summary.csv now; picking [0] would cache the
+                        # wrong path in the project record and the Results
+                        # screen would later show 1866 "Unknown" rows from
+                        # the feature-summary CSV.
+                        matches_files = [f for f in csv_files
+                                         if "_matches_" in f.name
+                                         and "_summary" not in f.name]
+                        if not matches_files:
+                            matches_files = [f for f in csv_files
+                                             if "_summary" not in f.name]
+                        if not matches_files:
+                            matches_files = csv_files
+                        csv_file = matches_files[0]
                         pdf_file = pdf_files[0] if pdf_files else ""
 
                         # Count matches

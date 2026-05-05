@@ -2,6 +2,16 @@
 
 All notable changes to the K2 GC-MS Suspect Screening Pipeline will be documented in this file.
 
+## [3.0.7] - 2026-05-05
+
+### Fixed
+- **Internal Standard normalization direction was inverted.** The per-sample factor was computed as `IS(sample) / max(IS)` and applied multiplicatively, which scaled samples with lower IS response *down* — the opposite of the intended correction. The factor is now `max(IS) / IS(sample)`, so samples with reduced injection efficiency (or matrix suppression) are scaled *up* to the reference injection level. The sample carrying the maximum IS still keeps factor = 1; samples with no detectable IS are still flagged and left unnormalized.
+
+### Action Required
+- Any prior reanalysis that used IS normalization was directionally incorrect. Re-run those analyses with v3.0.7+ before publishing or interpreting them.
+
+---
+
 ## [3.0.6] - 2026-04-29
 
 ### Added

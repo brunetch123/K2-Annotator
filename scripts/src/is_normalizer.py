@@ -236,7 +236,20 @@ class InternalStandardNormalizer:
     def _apply_normalization(self):
         """
         Apply normalization using self.is_values.
-        Normalization factor = is_value / max(is_values)
+
+        Normalization factor = max(is_values) / is_value, applied
+        multiplicatively to feature abundances. Samples whose IS
+        response is below the maximum had reduced injection efficiency
+        (or matrix suppression) and so receive a factor > 1, which
+        scales their feature abundances UP to the level they would
+        have shown under the reference (max-IS) injection. The sample
+        carrying the maximum IS keeps factor = 1.
+
+        Prior to v3.0.7 this method computed factor = is_value /
+        max(is_values), which scaled DOWN samples with lower IS
+        response — the inverse of the intended correction. Reanalyses
+        produced before v3.0.7 should be re-run if IS normalization
+        was used.
 
         Returns:
             bool: True if successful
@@ -265,8 +278,11 @@ class InternalStandardNormalizer:
                 self.normalization_factors[sample] = 1.0
                 self.missing_samples.append(sample)
             else:
-                # Calculate factor = is_value / max_is_value
-                self.normalization_factors[sample] = is_val / self.max_is_value
+                # factor = max(IS) / sample_IS  (≥ 1 for all but the
+                # max-IS sample, which keeps factor = 1). Multiplying
+                # abundances by this factor scales lower-IS samples up
+                # to the reference injection level.
+                self.normalization_factors[sample] = self.max_is_value / is_val
 
         # Apply normalization to all features
         normalized_count = 0

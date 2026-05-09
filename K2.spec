@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-K2 GC-MS Suspect Screening Pipeline - PyInstaller Build Specification
-Version 3.0.3
+K2 Annotator - PyInstaller Build Specification
+Version 3.0.8
 
 Build with: pyinstaller K2.spec --clean
 Output: dist/K2/K2.exe (folder mode) or dist/K2.exe (onefile mode)
@@ -20,7 +20,8 @@ SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
 datas = [
     # Icons and images
     ('K2Icon.png', '.'),
-    ('K2Logo2.png', '.'),
+    ('K2Logo.png', '.'),
+    ('K2Logo2.png', '.'),  # legacy fallback
     
     # Documentation
     ('K2_USER_GUIDE.md', '.'),

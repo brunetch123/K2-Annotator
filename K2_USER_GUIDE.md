@@ -1,4 +1,4 @@
-# K2 - GC-MS Analysis User Guide
+# K2 Annotator — User Guide
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -784,4 +784,4 @@ For bug reports, feature requests, or questions:
 
 ---
 
-**© 2026 - K2 GC-MS Analysis**
+**© 2026 K2 Annotator**

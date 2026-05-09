@@ -1,10 +1,14 @@
-# K2 GC-MS Suspect Screening Pipeline
+# K2 Annotator
 
-**Version 3.0.3** | Open-source GC-MS data processing and Level 2 compound identification
+<p align="center">
+  <img src="K2Logo.png" alt="K2 Annotator logo" width="420">
+</p>
+
+**Open-source GC-MS data processing and Level 2 compound identification.**
 
 ## Overview
 
-K2 Analyzer is an open-source pipeline for non-targeted GC-MS suspect screening, providing automated processing from raw instrument files to Level 2 compound identification. The pipeline integrates:
+K2 Annotator is an open-source pipeline for non-targeted GC-MS suspect screening, providing automated processing from raw instrument files to Level 2 compound identification. The pipeline integrates:
 
 - **Raw file conversion** via ProteoWizard MSConvert
 - **Feature detection and deconvolution** via MZmine
@@ -63,18 +67,18 @@ python scripts/cli.py --quant data.csv --msp spectra.msp --library library.msp -
 
 ## External Dependencies
 
-K2 requires the following tools to be installed separately (they are not bundled due to size and licensing):
+K2 Annotator requires the following tools to be installed separately (they are not bundled due to size and licensing):
 
 | Tool | Purpose | Download |
 |------|---------|----------|
 | **ProteoWizard MSConvert** | Convert raw instrument files (.D) to mzML | [proteowizard.sourceforge.io](https://proteowizard.sourceforge.io/) |
 | **MZmine 3** | Feature detection, deconvolution, quantification | [mzmine.github.io](https://mzmine.github.io/) |
 
-Place these in a `software/` directory alongside this repository, or configure their paths in the K2 GUI settings.
+Place these in a `software/` directory alongside this repository, or configure their paths in the K2 Annotator GUI settings.
 
 ## Spectral Library
 
-K2 requires a spectral library for compound identification. Users must provide their own library file in one of the supported formats below. Example templates are included in the `templates/` directory.
+K2 Annotator requires a spectral library for compound identification. Users must provide their own library file in one of the supported formats below. Example templates are included in the `templates/` directory.
 
 ### CSV Format
 ```csv
@@ -160,9 +164,9 @@ See [requirements.txt](requirements.txt):
 
 ## Citation
 
-If you use K2 in your research, please cite:
+If you use K2 Annotator in your research, please cite:
 
-*Brunet, T. (2026). K2 GC-MS Suspect Screening Pipeline (v3.0.3). GitHub. https://github.com/brunetch123/K2-GCMS-Pipeline*
+*Brunet, T. (2026). K2 Annotator: an open-source GC-MS suspect screening pipeline. GitHub. https://github.com/brunetch123/K2-GCMS-Pipeline*
 
 ## License
 
@@ -175,4 +179,4 @@ For bug reports, feature requests, or questions:
 
 ---
 
-**© 2026 K2 GC-MS Analysis Pipeline**
+**© 2026 K2 Annotator**

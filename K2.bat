@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-:: K2 GC-MS Suspect Screening Pipeline - Launcher
+:: K2 Annotator - Launcher (GC-MS Suspect Screening Pipeline)
 :: Double-click to run. Automatically installs dependencies on first use.
 
 cd /d "%~dp0"
@@ -48,7 +48,7 @@ if not exist ".deps_installed" (
 )
 
 :: -------------------------------------------------------
-:: 3. Launch K2 GUI
+:: 3. Launch K2 Annotator GUI
 :: -------------------------------------------------------
 python scripts\k2_gui.py
 

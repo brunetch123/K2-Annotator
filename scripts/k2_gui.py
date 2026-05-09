@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-K2 - GC-MS Analysis GUI
-Professional wrapper for the GC-MS suspect screening pipeline
+K2 Annotator — GC-MS Suspect Screening GUI
+Tkinter wrapper around the GC-MS suspect screening pipeline.
 """
 
 import tkinter as tk
@@ -19,12 +19,12 @@ from k2_screens import get_resource_path
 
 
 class K2Application(tk.Tk):
-    """Main K2 GUI Application"""
+    """Main K2 Annotator GUI Application"""
 
     def __init__(self):
         super().__init__()
 
-        self.title("K2 - GC-MS Analysis")
+        self.title("K2 Annotator")
         self.geometry("900x700")
 
         # Configuration and project management
@@ -352,7 +352,7 @@ class K2Application(tk.Tk):
     def show_help(self):
         """Show user guide"""
         help_window = tk.Toplevel(self)
-        help_window.title("K2 User Guide")
+        help_window.title("K2 Annotator — User Guide")
         help_window.geometry("700x500")
 
         # Add scrollable text
@@ -360,7 +360,7 @@ class K2Application(tk.Tk):
         text.pack(fill='both', expand=True, padx=10, pady=10)
 
         help_text = """
-K2 - GC-MS Analysis User Guide
+K2 Annotator — User Guide
 
 GETTING STARTED
 1. First-time setup: Configure paths to external tools (MSConvert, MZmine)
@@ -392,12 +392,12 @@ For detailed documentation, see the included user guide PDF.
     def show_about(self):
         """Show about dialog"""
         messagebox.showinfo(
-            "About K2",
-            "K2 - GC-MS Analysis\n\n"
-            "Version 3.0.3\n\n"
-            "A comprehensive tool for GC-MS suspect screening\n"
-            "including feature detection, spectral matching, and\n"
-            "retention index calibration.\n\n"
+            "About K2 Annotator",
+            "K2 Annotator\n\n"
+            "GC-MS Suspect Screening Software\n\n"
+            "A tool for non-targeted GC-MS suspect screening:\n"
+            "feature detection, Level 2 spectral matching, and\n"
+            "retention index calibration with hazard lookup.\n\n"
             "© 2026"
         )
 

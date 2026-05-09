@@ -1,6 +1,6 @@
 """
-K2 GUI Screens
-Individual screen implementations for the K2 application
+K2 Annotator — GUI Screens
+Individual screen implementations for the K2 Annotator application.
 """
 
 import tkinter as tk
@@ -110,8 +110,12 @@ class WelcomeScreen(BaseScreen):
     def __init__(self, parent, app):
         super().__init__(parent, app)
 
-        # Logo (if available) - centered
-        logo_path = get_resource_path("K2Logo2.png")
+        # Logo (if available) - centered. v3.0.8: K2Logo.png is the
+        # current K2 Annotator logo; K2Logo2.png is kept as a fallback
+        # for older installs that haven't been re-packaged yet.
+        logo_path = get_resource_path("K2Logo.png")
+        if not logo_path.exists():
+            logo_path = get_resource_path("K2Logo2.png")
         if logo_path.exists():
             try:
                 self.logo_image = tk.PhotoImage(file=str(logo_path))
@@ -119,16 +123,17 @@ class WelcomeScreen(BaseScreen):
                 logo_label.pack(pady=(50, 10))
             except Exception as e:
                 print(f"Could not load logo: {e}")
-                title = ttk.Label(self, text="K2", font=('Arial', 48, 'bold'))
+                title = ttk.Label(self, text="K2 Annotator",
+                                  font=('Arial', 48, 'bold'))
                 title.pack(pady=(50, 10))
-        
+
         # Introductory Message
         intro_frame = ttk.Frame(self)
         intro_frame.pack(pady=(0, 30))
-        
+
         ttk.Label(
-            intro_frame, 
-            text="GC-MS Suspect Screening Software", 
+            intro_frame,
+            text="GC-MS Suspect Screening Software",
             font=('Arial', 14, 'bold')
         ).pack()
 

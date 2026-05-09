@@ -1,6 +1,21 @@
 # Changelog
 
-All notable changes to the K2 GC-MS Suspect Screening Pipeline will be documented in this file.
+All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
+
+## [3.0.8] - 2026-05-09
+
+### Changed
+- **Renamed software to K2 Annotator** ahead of public release. Internal command-line and Python-package layouts are unchanged; only the user-facing brand name, the splash logo, and documentation references are updated.
+- **New splash logo** (`K2Logo.png`) replaces the previous wordmark on the welcome screen and in the README. The window icon (`K2Icon.png`) is unchanged.
+- GUI window title, About dialog, and User Guide popup now read "K2 Annotator". README, CHANGELOG, launcher batch file, and architecture / module diagrams updated to match.
+- Older `K2Logo2.png` is retained as a fallback in `WelcomeScreen` so the splash screen still renders on machines that have an older asset bundle.
+
+### Backward Compatibility
+- File extensions (`.K2`, `.K2config`) are unchanged — existing project files and presets continue to load.
+- The `~/.k2/k2_defaults.json` user-config location is unchanged — existing user settings carry over.
+- Git repository URL is unchanged.
+
+---
 
 ## [3.0.7] - 2026-05-05
 

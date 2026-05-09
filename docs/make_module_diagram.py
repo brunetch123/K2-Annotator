@@ -1,5 +1,5 @@
 """
-Render the module-level dependency diagram for the K2 pipeline.
+Render the module-level dependency diagram for K2 Annotator.
 
 Run:  python docs/make_module_diagram.py
 
@@ -121,7 +121,7 @@ def main():
 
     # Title
     ax.text(W / 2, 16.55,
-            "K2 Pipeline — Module Interaction Diagram",
+            "K2 Annotator — Module Interaction Diagram",
             ha="center", va="center", fontsize=14, fontweight="bold")
     ax.text(W / 2, 16.15,
             "Boxes are Python files (with their key classes / functions). "

@@ -1,5 +1,5 @@
 """
-Render the K2 GC-MS Suspect Screening Pipeline architecture diagram.
+Render the K2 Annotator architecture diagram.
 
 Run:  python docs/make_architecture_diagram.py
 
@@ -104,10 +104,10 @@ def main():
     ax.axis("off")
 
     # Title
-    ax.text(8.5, 10.1, "K2 GC-MS Suspect Screening Pipeline — Architecture",
+    ax.text(8.5, 10.1, "K2 Annotator — Architecture",
             ha="center", va="center", fontsize=14, fontweight="bold")
     ax.text(8.5, 9.7,
-            "External preprocessing (top) feeds the K2 analyzer (middle); "
+            "External preprocessing (top) feeds K2 Annotator (middle); "
             "surrogate recovery runs in parallel (bottom).",
             ha="center", va="center", fontsize=9, color="#555")
 
@@ -139,7 +139,7 @@ def main():
             color="#666", style="italic")
 
     # ----- LANE 2: K2 internal pipeline -----
-    draw_lane_label(ax, Y_PIPELINE + 0.85, "K2 Analyzer", C_PIPELINE_EDGE)
+    draw_lane_label(ax, Y_PIPELINE + 0.85, "K2 Annotator", C_PIPELINE_EDGE)
 
     # Universal parser
     draw_box(ax, 1.6, Y_PIPELINE,

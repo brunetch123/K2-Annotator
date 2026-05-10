@@ -2673,7 +2673,12 @@ class ExecutionScreen(BaseScreen):
             config = self.app.pipeline_config
             pipeline_script = Path(__file__).parent / "gcms_pipeline.py"
 
-            cmd = [sys.executable, str(pipeline_script)]
+            # `-u` puts the child Python into unbuffered mode. Without
+            # this, gcms_pipeline.py's print() calls go through Python's
+            # default block-buffered stdout on Windows, so the GUI
+            # console stays blank for minutes while the subprocess
+            # accumulates ~4 KB of output before flushing.
+            cmd = [sys.executable, "-u", str(pipeline_script)]
 
             # Add entry point
             entry_point = config['entry_point']
@@ -2759,13 +2764,18 @@ class ExecutionScreen(BaseScreen):
             self.log_console(f"Command: {' '.join(cmd)}\n\n")
             self.update_status("Running pipeline...")
 
-            # Execute
+            # Execute. Set PYTHONUNBUFFERED as a belt-and-braces
+            # measure alongside the -u flag above; some Python builds
+            # honor only one of the two.
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                env=env,
             )
 
             # Stream output

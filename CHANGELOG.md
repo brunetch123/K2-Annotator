@@ -2,6 +2,17 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.12] - 2026-05-10
+
+### Fixed
+- **GUI console no longer goes silent for minutes during raw-data conversion.** Two compounding issues:
+  1. The GUI launched `python gcms_pipeline.py` without `-u`, so the child Python's stdout was block-buffered. Validation messages and per-stage progress lines accumulated in a ~4 KB buffer and didn't reach the GUI console until the buffer filled or the process exited. The GUI now passes `-u` and sets `PYTHONUNBUFFERED=1` in the child environment.
+  2. `run_conversion()` used `subprocess.run(..., capture_output=True)` for MSConvert, which means MSConvert's output was bottled up until each file finished converting. Converting a `.D` folder from a network share routinely takes several minutes, so the GUI looked hung that whole time. Conversion now streams MSConvert's output line-by-line, each prefixed with `[msconvert]`.
+
+Net effect: every `print()` in the pipeline reaches the GUI console as soon as it is emitted, and MSConvert's per-file progress is visible while it runs.
+
+---
+
 ## [3.0.11] - 2026-05-10
 
 ### Fixed

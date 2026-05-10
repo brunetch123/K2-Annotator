@@ -222,7 +222,7 @@ def run_conversion(input_folder, output_folder):
     print()
 
     for i, raw_file in enumerate(raw_files, 1):
-        print(f"  [{i}/{total}] {raw_file.name}")
+        print(f"  [{i}/{total}] {raw_file.name}", flush=True)
 
         cmd = [
             str(MSCONVERT),
@@ -233,28 +233,43 @@ def run_conversion(input_folder, output_folder):
             "--zlib"
         ]
 
+        # Stream MSConvert output line-by-line rather than capturing it
+        # to a buffer. Converting a single .D folder from a network
+        # share can take several minutes; without live streaming the
+        # GUI console stays blank for that entire window and looks
+        # hung. Prefix each line with "[msconvert]" so it's obvious
+        # whose output it is.
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
         except OSError as e:
-            # WinError 362 = ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING.
-            # The MSConvert binary or one of its dependencies is a
-            # cloud-only placeholder and the provider isn't running.
-            # Surface a clear actionable message instead of the raw
-            # OSError trace.
             if getattr(e, "winerror", None) == 362:
                 print(f"    ERROR: Cannot launch MSConvert because a "
-                      f"cloud-only placeholder could not be hydrated.")
+                      f"cloud-only placeholder could not be hydrated.",
+                      flush=True)
                 print(f"           Either start your cloud client "
-                      f"(e.g. OneDrive) so it can fetch the file, or")
+                      f"(e.g. OneDrive) so it can fetch the file, or",
+                      flush=True)
                 print(f"           pin the software folder locally "
-                      f"(\"Always keep on this device\").")
-                print(f"           Underlying error: {e}")
+                      f"(\"Always keep on this device\").", flush=True)
+                print(f"           Underlying error: {e}", flush=True)
                 return None
             raise
 
-        if result.returncode != 0:
-            print(f"    ERROR: Conversion failed")
-            print(result.stderr)
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                print(f"    [msconvert] {line}", flush=True)
+        proc.wait()
+
+        if proc.returncode != 0:
+            print(f"    ERROR: Conversion failed (exit code "
+                  f"{proc.returncode})", flush=True)
             return None
     
     mzml_count = len(list(output_folder.glob("*.mzML")))

@@ -2693,6 +2693,21 @@ class ExecutionScreen(BaseScreen):
             cmd.extend(['--bff-c-factor', str(config.get('bff_c_factor', 5.0))])
             cmd.extend(['--output', config['output_folder']])
 
+            # External-tool path overrides (v3.0.11). Without these the
+            # pipeline falls back to its bundled-relative defaults
+            # (software/pwiz-bin/msconvert.exe, etc.), which is wrong
+            # whenever the user has moved or replaced the software
+            # folder via the GUI's settings screens.
+            if entry_point == 'raw' and config.get('msconvert_path'):
+                cmd.extend(['--msconvert', config['msconvert_path']])
+            if entry_point in ('raw', 'mzml'):
+                if config.get('mzmine_path'):
+                    cmd.extend(['--mzmine', config['mzmine_path']])
+                if config.get('mzmine_user_file'):
+                    cmd.extend(['--user-file', config['mzmine_user_file']])
+                if config.get('mzmine_batch_file'):
+                    cmd.extend(['--batch-file', config['mzmine_batch_file']])
+
             if config.get('ri_cal_path'):
                 cmd.extend(['--ri-cal', config['ri_cal_path']])
 

@@ -801,9 +801,57 @@ Examples:
         action='store_true',
         help='Enable verbose output'
     )
-    
+
+    # External-tool path overrides. These let the GUI (or a CLI user
+    # who keeps tools elsewhere) point the pipeline at MSConvert,
+    # MZmine, the MZmine user profile, and the MZmine batch file
+    # explicitly. Without these flags the pipeline falls back to its
+    # bundled-relative defaults, which is wrong on any install where
+    # the user moved or replaced the software/ directory.
+    parser.add_argument(
+        '--msconvert',
+        type=str,
+        default=None,
+        metavar='PATH',
+        help='Path to msconvert.exe (overrides bundled default)'
+    )
+    parser.add_argument(
+        '--mzmine',
+        type=str,
+        default=None,
+        metavar='PATH',
+        help='Path to mzmine_console.exe (overrides bundled default)'
+    )
+    parser.add_argument(
+        '--user-file',
+        type=str,
+        default=None,
+        metavar='PATH',
+        help='Path to MZmine .mzuser profile (overrides bundled default)'
+    )
+    parser.add_argument(
+        '--batch-file',
+        type=str,
+        default=None,
+        metavar='PATH',
+        help='Path to MZmine .mzbatch workflow (overrides bundled default)'
+    )
+
     args = parser.parse_args()
-    
+
+    # Apply tool-path overrides. We rebind the module-level constants
+    # so existing call sites (validate_setup / run_conversion /
+    # run_mzmine_processing) pick them up without further plumbing.
+    global MSCONVERT, MZMINE, USER_FILE, BATCH_FILE
+    if args.msconvert:
+        MSCONVERT = Path(args.msconvert)
+    if args.mzmine:
+        MZMINE = Path(args.mzmine)
+    if args.user_file:
+        USER_FILE = Path(args.user_file)
+    if args.batch_file:
+        BATCH_FILE = Path(args.batch_file)
+
     try:
         return run_pipeline(args)
     except KeyboardInterrupt:

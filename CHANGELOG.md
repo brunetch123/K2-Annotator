@@ -2,6 +2,15 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.11] - 2026-05-10
+
+### Fixed
+- **GUI-configured tool paths are now actually forwarded to the pipeline.** Previously, `gcms_pipeline.py` hardcoded the locations of `msconvert.exe`, `mzmine_console.exe`, the MZmine `.mzuser` profile, and the `.mzbatch` workflow as module-level constants relative to its own parent directory, and exposed no way to override them. So no matter what paths a user picked in the K2 Annotator settings screens, the pipeline always tried to run the binaries baked into `software/` next to `gcms_pipeline.py` — confusing on its own, and visibly broken on installs where that folder was a OneDrive placeholder while the user's "real" tools lived elsewhere.
+- `gcms_pipeline.py` now accepts `--msconvert`, `--mzmine`, `--user-file`, and `--batch-file` flags and applies them before validation. The bundled-relative paths remain as defaults for direct CLI users who haven't moved anything.
+- The K2 Annotator GUI command builder now forwards the saved tool paths (`msconvert_path`, `mzmine_path`, `mzmine_user_file`, `mzmine_batch_file`) on every run.
+
+---
+
 ## [3.0.10] - 2026-05-09
 
 ### Fixed

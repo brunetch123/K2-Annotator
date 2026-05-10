@@ -54,10 +54,62 @@ def print_step(step_num, total, description):
     print("-" * 50)
 
 
+def _is_cloud_placeholder(path):
+    """
+    Return True if `path` is a OneDrive (or similar) cloud-only
+    placeholder rather than an actually-local file.
+
+    On modern Windows, on-demand cloud files are marked with one of:
+      - FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS (0x00400000)  — the
+        canonical "this file's data isn't local; reading it will
+        trigger the cloud provider" marker used by OneDrive Files
+        On-Demand
+      - FILE_ATTRIBUTE_RECALL_ON_OPEN (0x00040000)          — older
+        recall marker
+      - FILE_ATTRIBUTE_OFFLINE (0x1000)                     — legacy
+        offline marker, still set by some clients
+
+    Any one of these three is sufficient to know that touching the
+    file may fail with WinError 362 if the cloud client isn't
+    running. (Note: Python's os.stat() does NOT always report
+    REPARSE_POINT for these files even though Win32 does, so we
+    can't gate on that bit.)
+
+    On non-Windows hosts the concept doesn't apply and this returns
+    False unconditionally.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        attrs = os.stat(path).st_file_attributes  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return False
+    RECALL_ON_DATA_ACCESS = 0x00400000
+    RECALL_ON_OPEN = 0x00040000
+    OFFLINE = 0x00001000
+    return bool(attrs & (RECALL_ON_DATA_ACCESS | RECALL_ON_OPEN | OFFLINE))
+
+
 def validate_tool(path, name):
-    """Check if a tool exists."""
+    """Check that a tool exists AND is locally hydrated.
+
+    A cloud-only placeholder will pass `path.exists()` but Windows
+    will fail with `WinError 362: The cloud file provider is not
+    running` the moment subprocess.run() tries to launch it (or read
+    from it) while OneDrive is offline. Catching that case here turns
+    a confusing mid-pipeline crash into a clear up-front error.
+    """
     if not path.exists():
         print(f"  [X] {name}: NOT FOUND at {path}")
+        return False
+    if _is_cloud_placeholder(path):
+        print(f"  [X] {name}: cloud-only placeholder at {path}")
+        print(f"        The file is synced to a cloud provider "
+              f"(e.g. OneDrive) but is not actually present on this")
+        print(f"        machine. Either start the cloud client so it "
+              f"can hydrate the file on demand, or right-click the")
+        print(f"        software folder and choose \"Always keep on "
+              f"this device\" to pin all files locally.")
         return False
     print(f"  [OK] {name}: {path}")
     return True
@@ -171,7 +223,7 @@ def run_conversion(input_folder, output_folder):
 
     for i, raw_file in enumerate(raw_files, 1):
         print(f"  [{i}/{total}] {raw_file.name}")
-        
+
         cmd = [
             str(MSCONVERT),
             str(raw_file),
@@ -180,9 +232,26 @@ def run_conversion(input_folder, output_folder):
             "--64",
             "--zlib"
         ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+        except OSError as e:
+            # WinError 362 = ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING.
+            # The MSConvert binary or one of its dependencies is a
+            # cloud-only placeholder and the provider isn't running.
+            # Surface a clear actionable message instead of the raw
+            # OSError trace.
+            if getattr(e, "winerror", None) == 362:
+                print(f"    ERROR: Cannot launch MSConvert because a "
+                      f"cloud-only placeholder could not be hydrated.")
+                print(f"           Either start your cloud client "
+                      f"(e.g. OneDrive) so it can fetch the file, or")
+                print(f"           pin the software folder locally "
+                      f"(\"Always keep on this device\").")
+                print(f"           Underlying error: {e}")
+                return None
+            raise
+
         if result.returncode != 0:
             print(f"    ERROR: Conversion failed")
             print(result.stderr)
@@ -224,13 +293,28 @@ def run_mzmine(input_folder, output_folder, output_name, threads):
     print("MZmine log (filtered):")
     print("-" * 40)
 
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1
-    )
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+    except OSError as e:
+        # WinError 362 = ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING. Same
+        # diagnosis as the MSConvert path: the binary is a OneDrive
+        # placeholder and the provider isn't running.
+        if getattr(e, "winerror", None) == 362:
+            print(f"    ERROR: Cannot launch MZmine because a cloud-only "
+                  f"placeholder could not be hydrated.")
+            print(f"           Either start your cloud client (e.g. "
+                  f"OneDrive) so it can fetch the file, or")
+            print(f"           pin the software folder locally "
+                  f"(\"Always keep on this device\").")
+            print(f"           Underlying error: {e}")
+            return None
+        raise
 
     error_lines = []
     for line in process.stdout:

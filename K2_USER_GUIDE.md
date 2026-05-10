@@ -450,6 +450,17 @@ K2 generates results in:
 
 ---
 
+**Problem:** `[WinError 362] The cloud file provider is not running` during conversion or MZmine launch
+**Cause:** The `software/` folder (containing MSConvert and/or MZmine) is being kept in OneDrive (or another cloud provider) and the binaries are *cloud-only placeholders* — they look like real files but their contents are not on disk. When the pipeline tries to launch them, Windows asks the cloud client to hydrate them and fails because the client isn't running.
+**Solution (pick one):**
+- Start OneDrive (Start menu → OneDrive) so it can fetch the files on demand. Re-run the pipeline.
+- In File Explorer, right-click the `software/` folder and choose **"Always keep on this device"**. Wait for the green-check icon, then re-run.
+- Or move the `software/` folder out of any cloud-synced location entirely (e.g. to `C:\K2\software\`) and update the configured paths in the GUI.
+
+K2 Annotator now also catches this case at startup and refuses to run with an actionable error, so you should not see the raw `WinError 362` if you re-run after pulling the latest version.
+
+---
+
 ### Getting Help
 
 **Check Console Output:**

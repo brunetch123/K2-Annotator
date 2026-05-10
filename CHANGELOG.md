@@ -2,6 +2,14 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.10] - 2026-05-09
+
+### Fixed
+- **Surface a clear error when MSConvert / MZmine binaries are cloud-only placeholders.** When the `software/` folder is kept in OneDrive and OneDrive isn't running, the binaries inside are placeholders that pass `os.path.exists()` but fail with a confusing `WinError 362: The cloud file provider is not running` when the pipeline tries to launch them. `validate_setup()` now detects this case via the `RECALL_ON_DATA_ACCESS` / `RECALL_ON_OPEN` / `OFFLINE` file attributes and refuses to start the pipeline, with a message telling the user how to fix it ("Always keep on this device" or start the cloud client). The MSConvert and MZmine subprocess calls also catch a leaked WinError 362 and report the same diagnosis instead of dumping the raw OSError trace.
+- Documented this scenario explicitly in `K2_USER_GUIDE.md` under "Troubleshooting".
+
+---
+
 ## [3.0.9] - 2026-05-09
 
 ### Changed

@@ -35,10 +35,14 @@ EXTERNAL SOFTWARE REQUIRED
 K2 requires the following external tools, which must be downloaded and 
 installed separately due to licensing requirements:
 
-1. ProteoWizard MSConvert (for .D file conversion)
-   -----------------------------------------------
+1. ProteoWizard MSConvert (for raw instrument data conversion)
+   -----------------------------------------------------------
    - Download: https://proteowizard.sourceforge.io/
-   - Required for: Converting raw Agilent .D files to .mzML format
+   - Required for: Converting vendor raw data to .mzML format
+   - Supports common GC-MS / LC-MS vendor formats (Agilent .D,
+     Bruker .d, Thermo .raw, Sciex .wiff, Waters .raw, Shimadzu .lcd)
+   - K2 Annotator has been tested against Agilent .D folders;
+     other formats are accepted on a best-effort basis
    - Install to default location or note the path to msconvert.exe
    - Typical path: C:\Program Files\ProteoWizard\msconvert.exe
 
@@ -59,12 +63,13 @@ FIRST-TIME SETUP
 2. Click "Start New Analysis"
 
 3. Select your entry point:
-   - "Instrument Files (.D)" - Full pipeline from raw data
+   - "Raw Instrument Data" - Full pipeline from any vendor raw format
+     (Agilent .D, Bruker .d, Thermo .raw, Sciex .wiff, Shimadzu .lcd, etc.)
    - "Instrument Files (.mzML)" - Skip conversion step
    - "Deconvoluted Spectra (.MSP)" - Library matching only
 
 4. Configure external tools:
-   - Browse to locate msconvert.exe (if using .D files)
+   - Browse to locate msconvert.exe (if starting from raw data)
    - Browse to locate mzmine_console.exe (if using MZmine)
    - Check "Save as default" to remember paths
 

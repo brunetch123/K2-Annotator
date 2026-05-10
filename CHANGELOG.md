@@ -2,6 +2,19 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.9] - 2026-05-09
+
+### Changed
+- **Vendor-neutral raw-data entry point.** The "Instrument Files (.D)" option on the welcome screen is now labelled **"Raw Instrument Data"**, and the input-folder hint reads "Select folder containing raw instrument data". The MSConvert configuration screen, GUI help text, and CLI argument help all use the generic phrasing.
+- **Multi-vendor file discovery.** `find_d_files()` is now `find_raw_data()` (the old name remains as a back-compat alias) and scans for `.D` / `.d` (Agilent, Bruker), `.raw` (Thermo, Waters), `.wiff` (Sciex), and `.lcd` (Shimadzu). MSConvert auto-detects the vendor from the input path, so all of these are passed through unchanged.
+- **Documentation explicitly notes the tested vendor.** README, `K2_USER_GUIDE.md`, and `INSTALLATION.txt` now state that K2 Annotator has been tested with Agilent `.D` folders and that other vendor formats are accepted on a best-effort basis via MSConvert's native readers.
+
+### Backward Compatibility
+- Existing `--from-raw` invocations still work — the flag now accepts any vendor format, not just `.D`.
+- The Python function `find_d_files` is preserved as an alias for `find_raw_data`, so any external scripts importing it continue to work.
+
+---
+
 ## [3.0.8] - 2026-05-09
 
 ### Changed

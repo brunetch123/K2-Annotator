@@ -200,12 +200,12 @@ class EntrySelectScreen(BaseScreen):
         # Selection variable
         self.entry_var = tk.StringVar(value='raw')
 
-        # Option 1: .D files
+        # Option 1: vendor raw data
         raw_frame = self.create_option_frame(
             content,
             'raw',
-            "Instrument Files (.D)",
-            "Start from Agilent raw data files\n"
+            "Raw Instrument Data",
+            "Start from vendor raw files\n"
             "Pipeline: Conversion → MZmine → Library Matching"
         )
         raw_frame.pack(fill='x', pady=10)
@@ -296,7 +296,7 @@ class ProjectSetupScreen(BaseScreen):
         # Entry type hint
         self.input_hint = ttk.Label(
             input_frame,
-            text="Select folder containing .D files",
+            text="Select folder containing raw instrument data",
             foreground='gray'
         )
         self.input_hint.pack(anchor='w', pady=(5, 0))
@@ -345,7 +345,7 @@ class ProjectSetupScreen(BaseScreen):
         # Update hint based on entry point
         entry_point = self.app.pipeline_config.get('entry_point', 'raw')
         hints = {
-            'raw': "Select folder containing .D files",
+            'raw': "Select folder containing raw instrument data",
             'mzml': "Select folder containing .mzML files",
             'msp': "Select folder containing MZmine output (.MSP + .CSV)"
         }
@@ -1815,8 +1815,13 @@ class MSConvertScreen(BaseScreen):
         info_frame.pack(fill='x', pady=(0, 20))
 
         info_text = (
-            "MSConvert is required to convert Agilent .D files to mzML format.\n"
-            "It is part of the ProteoWizard suite.\n\n"
+            "MSConvert is required to convert raw instrument data to mzML "
+            "format.\n"
+            "It is part of the ProteoWizard suite and supports common GC-MS "
+            "/ LC-MS vendor formats (Agilent, Thermo, Sciex, Waters, "
+            "Bruker, Shimadzu).\n"
+            "Note: K2 Annotator has been tested with Agilent .D folders; "
+            "other vendor formats are accepted on a best-effort basis.\n\n"
             "Download from: http://proteowizard.sourceforge.net/"
         )
 

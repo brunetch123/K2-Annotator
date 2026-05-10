@@ -2,10 +2,12 @@
 """
 GC-MS Suspect Screening Pipeline
 =================================
-Unified pipeline for Agilent GC-QTOF data processing and annotation.
+Unified pipeline for GC-MS data processing and annotation. Production
+testing has been performed against Agilent .D folders; other vendor
+formats supported by MSConvert are accepted on a best-effort basis.
 
 Entry points:
-  --from-raw     Start from Agilent .D files (full pipeline)
+  --from-raw     Start from a folder of vendor raw data (full pipeline)
   --from-mzml    Start from mzML files (skip conversion)
   --from-mzmine  Start from MZmine output (library matching only)
 
@@ -84,12 +86,42 @@ def validate_setup(stages):
     return valid
 
 
-def find_d_files(input_folder):
-    """Find all Agilent .D folders."""
-    d_files = sorted(input_folder.glob("*.D"))
-    if not d_files:
-        d_files = sorted(input_folder.glob("*.d"))
-    return d_files
+def find_raw_data(input_folder):
+    """Find vendor raw data files/folders that MSConvert can read.
+
+    Scans for the common GC-MS / LC-MS vendor extensions:
+      - .D / .d  (Agilent, Bruker — folder)
+      - .raw     (Thermo — file; Waters — folder)
+      - .wiff    (Sciex — file)
+      - .lcd     (Shimadzu — file)
+
+    MSConvert auto-detects the vendor from the input path, so all of
+    these can be passed through unchanged.
+
+    Production testing has only been performed against Agilent .D
+    folders; other vendor formats are accepted on a best-effort basis
+    via MSConvert's native readers.
+    """
+    patterns = ("*.D", "*.d", "*.raw", "*.RAW",
+                "*.wiff", "*.WIFF", "*.lcd", "*.LCD")
+    found = []
+    for p in patterns:
+        found.extend(input_folder.glob(p))
+    # De-duplicate on case-insensitive filesystems where *.D and *.d
+    # match the same path twice.
+    seen = set()
+    unique = []
+    for f in sorted(found, key=lambda p: str(p).lower()):
+        key = str(f).lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(f)
+    return unique
+
+
+# Back-compat alias: older code paths called find_d_files() before
+# multi-vendor support landed in v3.0.9.
+find_d_files = find_raw_data
 
 
 def find_mzml_files(input_folder):
@@ -124,25 +156,25 @@ def find_mzmine_outputs(input_folder):
 
 
 # ============================================================================
-# Stage 1: Convert .D to mzML
+# Stage 1: Convert vendor raw data → mzML
 # ============================================================================
 def run_conversion(input_folder, output_folder):
-    """Convert all .D files to mzML format."""
+    """Convert all vendor raw files in the input folder to mzML."""
     output_folder.mkdir(parents=True, exist_ok=True)
-    
-    d_files = find_d_files(input_folder)
-    total = len(d_files)
-    
+
+    raw_files = find_raw_data(input_folder)
+    total = len(raw_files)
+
     print(f"Converting {total} files to mzML...")
     print(f"Output: {output_folder}")
     print()
-    
-    for i, d_file in enumerate(d_files, 1):
-        print(f"  [{i}/{total}] {d_file.name}")
+
+    for i, raw_file in enumerate(raw_files, 1):
+        print(f"  [{i}/{total}] {raw_file.name}")
         
         cmd = [
             str(MSCONVERT),
-            str(d_file),
+            str(raw_file),
             "-o", str(output_folder),
             "--mzML",
             "--64",
@@ -357,7 +389,7 @@ def run_pipeline(args):
     if args.from_raw:
         input_folder = Path(args.from_raw)
         stages = ['convert', 'mzmine', 'match']
-        input_type = "Agilent .D files"
+        input_type = "vendor raw data"
     elif args.from_mzml:
         input_folder = Path(args.from_mzml)
         stages = ['mzmine', 'match']
@@ -417,11 +449,12 @@ def run_pipeline(args):
     
     # Count input files
     if 'convert' in stages:
-        d_files = find_d_files(input_folder)
-        if not d_files:
-            print(f"ERROR: No .D files found in {input_folder}")
+        raw_files = find_raw_data(input_folder)
+        if not raw_files:
+            print(f"ERROR: No vendor raw data files found in {input_folder} "
+                  f"(looked for .D, .d, .raw, .wiff, .lcd)")
             return 1
-        print(f"Found {len(d_files)} .D files")
+        print(f"Found {len(raw_files)} raw input file(s)")
     elif 'mzmine' in stages:
         mzml_files = find_mzml_files(input_folder)
         if not mzml_files:
@@ -454,7 +487,7 @@ def run_pipeline(args):
     # ========================================================================
     if 'convert' in stages:
         current_step += 1
-        print_step(current_step, total_steps, "Converting .D files to mzML")
+        print_step(current_step, total_steps, "Converting raw data to mzML")
         
         result = run_conversion(input_folder, converted_dir)
         if result is None:
@@ -536,12 +569,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Entry Points:
-  --from-raw     Full pipeline: .D -> mzML -> MZmine -> Library Matching
+  --from-raw     Full pipeline: raw -> mzML -> MZmine -> Library Matching
   --from-mzml    Skip conversion: mzML -> MZmine -> Library Matching
   --from-mzmine  Matching only: MZmine output -> Library Matching
 
 Examples:
-  # Full pipeline from raw Agilent data
+  # Full pipeline from vendor raw data
   python gcms_pipeline.py --from-raw "X:\\Data\\Project\\raw_data"
 
   # Start from mzML files
@@ -561,7 +594,9 @@ Examples:
     entry.add_argument(
         '--from-raw', '-r',
         metavar='FOLDER',
-        help='Start from folder containing Agilent .D files'
+        help='Start from folder containing vendor raw data '
+             '(Agilent .D / Bruker .d folders, Thermo .raw files, '
+             'Sciex .wiff files, Shimadzu .lcd files)'
     )
     entry.add_argument(
         '--from-mzml', '-m',

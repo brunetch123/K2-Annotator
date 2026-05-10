@@ -71,10 +71,22 @@ K2 Annotator requires the following tools to be installed separately (they are n
 
 | Tool | Purpose | Download |
 |------|---------|----------|
-| **ProteoWizard MSConvert** | Convert raw instrument files (.D) to mzML | [proteowizard.sourceforge.io](https://proteowizard.sourceforge.io/) |
+| **ProteoWizard MSConvert** | Convert raw instrument data to mzML (any vendor format MSConvert supports) | [proteowizard.sourceforge.io](https://proteowizard.sourceforge.io/) |
 | **MZmine 3** | Feature detection, deconvolution, quantification | [mzmine.github.io](https://mzmine.github.io/) |
 
 Place these in a `software/` directory alongside this repository, or configure their paths in the K2 Annotator GUI settings.
+
+## Supported Input Formats
+
+K2 Annotator can ingest data at three points in the workflow:
+
+| Entry point | Accepts |
+|-------------|---------|
+| **Raw instrument data** | Any vendor format MSConvert can read (e.g. Agilent `.D`, Bruker `.d`, Thermo `.raw`, Sciex `.wiff`, Waters `.raw`, Shimadzu `.lcd`). The pipeline converts to mzML, runs MZmine, and matches against the library. |
+| **mzML files** | Pre-converted mzML. Skips MSConvert; runs MZmine and matching. |
+| **MZmine output** | Pre-deconvoluted feature list (CSV) and spectra (MSP). Matching only. MS-DIAL output in the same form is also accepted. |
+
+> ⚠️ **Tested with Agilent .D folders.** Other vendor formats are passed through to MSConvert's native readers and are accepted on a best-effort basis. If you run K2 Annotator on a non-Agilent format and hit a problem, please file an issue with the vendor and file extension.
 
 ## Spectral Library
 

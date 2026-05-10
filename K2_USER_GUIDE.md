@@ -14,7 +14,7 @@
 ## Introduction
 
 K2 is a comprehensive GUI application for GC-MS non-target analysis. It wraps a complete pipeline including:
-- Raw data conversion (.D → .mzML)
+- Raw data conversion (vendor raw → .mzML)
 - Feature detection and deconvolution (MZmine)
 - Spectral library matching
 - Retention index calibration
@@ -58,10 +58,12 @@ python scripts\k2_gui.py
 
 K2 requires external software for certain pipeline stages. You only need to set these up once.
 
-### 1. MSConvert (Required for .D file conversion)
+### 1. MSConvert (Required for raw instrument data conversion)
 
 **What is it?**
-MSConvert converts proprietary instrument files to open mzML format.
+MSConvert converts vendor instrument files (Agilent `.D`, Bruker `.d`, Thermo `.raw`, Sciex `.wiff`, Waters `.raw`, Shimadzu `.lcd`, etc.) to the open mzML format.
+
+> ⚠️ K2 Annotator has been tested against Agilent `.D` folders. Other vendor formats are passed through to MSConvert's native readers and are accepted on a best-effort basis.
 
 **Where to get it:**
 Download ProteoWizard from: http://proteowizard.sourceforge.net/
@@ -227,7 +229,11 @@ Enables automatic toxicity data retrieval for identified compounds.
 
 3. **Select Entry Point**
    Choose where to start in the pipeline:
-   - **Instrument Files (.D)**: Full pipeline from raw Agilent data
+   - **Raw Instrument Data**: Full pipeline from vendor raw files
+     (Agilent `.D`, Bruker `.d`, Thermo `.raw`, Sciex `.wiff`,
+     Shimadzu `.lcd`, etc. — anything MSConvert can read).
+     Tested with Agilent `.D` folders; other vendor formats are
+     accepted on a best-effort basis.
    - **Instrument Files (.mzML)**: Skip conversion, start with MZmine
    - **Deconvoluted Spectra (.MSP)**: Skip to library matching only
 
@@ -238,7 +244,7 @@ Enables automatic toxicity data retrieval for identified compounds.
 
 5. **Configure Tools** (depending on entry point)
 
-   **If starting from .D files:**
+   **If starting from raw instrument data:**
    - Locate `msconvert.exe`
    - Check "Save as default" to remember for next time
 
@@ -456,7 +462,7 @@ K2 generates results in:
 - Use Browse buttons when possible
 
 **Test Individual Components:**
-- Run msconvert manually on one .D file
+- Run msconvert manually on one raw input file
 - Test MZmine with a small dataset
 - Validate library file format
 

@@ -375,7 +375,10 @@ REQUIRED EXTERNAL SOFTWARE
 - RI Calibration File: Retention index calibration (optional)
 
 WORKFLOW
-• From .D files: Full pipeline (conversion → MZmine → matching)
+• From raw instrument data: Full pipeline (conversion → MZmine → matching)
+  Tested with Agilent .D; other vendor formats supported by MSConvert
+  (Thermo .raw, Sciex .wiff, Bruker .d, Shimadzu .lcd) are accepted
+  on a best-effort basis.
 • From .mzML files: Partial pipeline (MZmine → matching)
 • From .MSP files: Matching only
 

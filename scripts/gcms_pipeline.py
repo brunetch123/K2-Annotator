@@ -18,11 +18,13 @@ Usage:
 """
 
 import argparse
+import os
+import shutil
 import subprocess
 import sys
-import os
-from pathlib import Path
+import tempfile
 from datetime import datetime
+from pathlib import Path
 
 # ============================================================================
 # Configuration - Edit these paths for your system
@@ -210,67 +212,124 @@ def find_mzmine_outputs(input_folder):
 # ============================================================================
 # Stage 1: Convert vendor raw data → mzML
 # ============================================================================
-def run_conversion(input_folder, output_folder):
-    """Convert all vendor raw files in the input folder to mzML."""
+def run_conversion(input_folder, output_folder, stage_locally=True):
+    """Convert all vendor raw files in the input folder to mzML.
+
+    `stage_locally` (default True): convert into a local scratch
+    directory first, then move the finished `.mzML` to
+    `output_folder`. MSConvert writes the output file incrementally
+    with fsyncs; doing that directly against a slow network share
+    (Z:, SMB, VPN-mounted) can stretch a sub-minute conversion into
+    many hours. Staging to local disk makes the slow part one
+    bulk-copy at the end instead of many tiny synchronous writes.
+
+    Set `stage_locally=False` (or pass `--no-stage-locally` on the
+    CLI) to write directly to `output_folder` — only worth doing if
+    the output is already on a fast local disk.
+    """
     output_folder.mkdir(parents=True, exist_ok=True)
 
     raw_files = find_raw_data(input_folder)
     total = len(raw_files)
 
-    print(f"Converting {total} files to mzML...")
-    print(f"Output: {output_folder}")
-    print()
+    if stage_locally:
+        # Anchor the scratch dir under the system temp drive (usually
+        # C:\Users\<user>\AppData\Local\Temp) so we are guaranteed a
+        # fast local filesystem regardless of where output_folder is.
+        stage_root = Path(tempfile.mkdtemp(prefix="k2_msconvert_"))
+        print(f"Converting {total} files to mzML...", flush=True)
+        print(f"  Staging directory: {stage_root}", flush=True)
+        print(f"  Final output:      {output_folder}", flush=True)
+        print(flush=True)
+    else:
+        stage_root = None
+        print(f"Converting {total} files to mzML (direct write)...",
+              flush=True)
+        print(f"Output: {output_folder}", flush=True)
+        print(flush=True)
 
-    for i, raw_file in enumerate(raw_files, 1):
-        print(f"  [{i}/{total}] {raw_file.name}", flush=True)
+    try:
+        for i, raw_file in enumerate(raw_files, 1):
+            print(f"  [{i}/{total}] {raw_file.name}", flush=True)
 
-        cmd = [
-            str(MSCONVERT),
-            str(raw_file),
-            "-o", str(output_folder),
-            "--mzML",
-            "--64",
-            "--zlib"
-        ]
+            # Per-file staging dir keeps the move loop simple — at the
+            # end of each conversion, whatever .mzML files appear in
+            # this folder are the ones MSConvert just produced.
+            if stage_locally:
+                write_dir = stage_root / f"_run_{i:04d}"
+                write_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                write_dir = output_folder
 
-        # Stream MSConvert output line-by-line rather than capturing it
-        # to a buffer. Converting a single .D folder from a network
-        # share can take several minutes; without live streaming the
-        # GUI console stays blank for that entire window and looks
-        # hung. Prefix each line with "[msconvert]" so it's obvious
-        # whose output it is.
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-        except OSError as e:
-            if getattr(e, "winerror", None) == 362:
-                print(f"    ERROR: Cannot launch MSConvert because a "
-                      f"cloud-only placeholder could not be hydrated.",
-                      flush=True)
-                print(f"           Either start your cloud client "
-                      f"(e.g. OneDrive) so it can fetch the file, or",
-                      flush=True)
-                print(f"           pin the software folder locally "
-                      f"(\"Always keep on this device\").", flush=True)
-                print(f"           Underlying error: {e}", flush=True)
+            cmd = [
+                str(MSCONVERT),
+                str(raw_file),
+                "-o", str(write_dir),
+                "--mzML",
+                "--64",
+                "--zlib"
+            ]
+
+            # Stream MSConvert output line-by-line rather than
+            # capturing it to a buffer; we want live progress.
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except OSError as e:
+                if getattr(e, "winerror", None) == 362:
+                    print(f"    ERROR: Cannot launch MSConvert because "
+                          f"a cloud-only placeholder could not be "
+                          f"hydrated.", flush=True)
+                    print(f"           Either start your cloud client "
+                          f"(e.g. OneDrive) so it can fetch the file, or",
+                          flush=True)
+                    print(f"           pin the software folder locally "
+                          f"(\"Always keep on this device\").", flush=True)
+                    print(f"           Underlying error: {e}", flush=True)
+                    return None
+                raise
+
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line:
+                    print(f"    [msconvert] {line}", flush=True)
+            proc.wait()
+
+            if proc.returncode != 0:
+                print(f"    ERROR: Conversion failed (exit code "
+                      f"{proc.returncode})", flush=True)
                 return None
-            raise
 
-        for line in proc.stdout:
-            line = line.rstrip()
-            if line:
-                print(f"    [msconvert] {line}", flush=True)
-        proc.wait()
-
-        if proc.returncode != 0:
-            print(f"    ERROR: Conversion failed (exit code "
-                  f"{proc.returncode})", flush=True)
-            return None
+            # Move what MSConvert just produced to the real output dir.
+            if stage_locally:
+                produced = sorted(write_dir.glob("*.mzML"))
+                if not produced:
+                    print(f"    WARNING: MSConvert reported success "
+                          f"but produced no .mzML for {raw_file.name}",
+                          flush=True)
+                for mzml in produced:
+                    final_path = output_folder / mzml.name
+                    size_mb = mzml.stat().st_size / (1024 * 1024)
+                    print(f"    [copy] {mzml.name} ({size_mb:.1f} MB) "
+                          f"-> {output_folder}", flush=True)
+                    # shutil.move falls back to copy+remove when the
+                    # source and destination are on different volumes,
+                    # which is exactly our case (local scratch -> Z:).
+                    shutil.move(str(mzml), str(final_path))
+                # Drop the now-empty per-file scratch dir.
+                try:
+                    write_dir.rmdir()
+                except OSError:
+                    pass
+    finally:
+        # Always clean up the staging root, even on failure.
+        if stage_locally and stage_root and stage_root.exists():
+            shutil.rmtree(stage_root, ignore_errors=True)
     
     mzml_count = len(list(output_folder.glob("*.mzML")))
     print()
@@ -588,7 +647,11 @@ def run_pipeline(args):
         current_step += 1
         print_step(current_step, total_steps, "Converting raw data to mzML")
         
-        result = run_conversion(input_folder, converted_dir)
+        result = run_conversion(
+            input_folder,
+            converted_dir,
+            stage_locally=not getattr(args, 'no_stage_locally', False),
+        )
         if result is None:
             return 1
         
@@ -815,6 +878,17 @@ Examples:
         '--verbose', '-v',
         action='store_true',
         help='Enable verbose output'
+    )
+
+    parser.add_argument(
+        '--no-stage-locally',
+        action='store_true',
+        help='Write MSConvert output directly to the final output '
+             'folder instead of staging through local temp disk. '
+             'Faster when the output folder is already on a fast '
+             'local drive; much slower when the output folder is a '
+             'network share (Z:, SMB, VPN-mounted) — leave this OFF '
+             'unless you know your output is local.'
     )
 
     # External-tool path overrides. These let the GUI (or a CLI user

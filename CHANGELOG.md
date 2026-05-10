@@ -2,6 +2,15 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.13] - 2026-05-10
+
+### Fixed
+- **MSConvert conversion no longer drags for hours when the output folder is on a network share.** Root cause: MSConvert writes the `.mzML` incrementally with frequent fsyncs, and over a network share (Z:, SMB, VPN) each fsync round-trips over the network, turning a sub-minute conversion into a multi-hour ordeal. `run_conversion()` now stages every conversion through a local scratch directory (`%TEMP%\k2_msconvert_*`) and copies the finished file to the requested output folder in one shot. The slow part is reduced to one bulk-copy at the end of each file instead of thousands of tiny synchronous writes.
+- A new `--no-stage-locally` CLI flag opts out for users whose output is already on a fast local disk.
+- Documented in `K2_USER_GUIDE.md` under "Troubleshooting".
+
+---
+
 ## [3.0.12] - 2026-05-10
 
 ### Fixed

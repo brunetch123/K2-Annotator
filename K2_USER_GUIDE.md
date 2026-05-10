@@ -461,6 +461,14 @@ K2 Annotator now also catches this case at startup and refuses to run with an ac
 
 ---
 
+**Problem:** MSConvert appears stuck for hours during the "writing to mzML" stage
+**Cause:** Your output folder is on a network share (Z:, an SMB mount, a VPN-mounted volume, etc.). MSConvert writes the `.mzML` output incrementally with frequent fsyncs; doing that against a high-latency network filesystem can stretch a minute of conversion into many hours of wall time, because each write round-trips over the network.
+**Solution:** From v3.0.13 onward K2 Annotator stages each conversion through a fast local temp directory (default `%TEMP%\k2_msconvert_*`) and copies the finished `.mzML` to the requested output folder in one shot. This is on by default — you should see a `Staging directory:` line at the top of the conversion stage. If you ever want to skip the staging step (e.g. because your output is already on a fast local SSD and you want to avoid the extra copy), pass `--no-stage-locally` to `gcms_pipeline.py`.
+
+If staging is enabled and conversion is *still* slow, the bottleneck is now on the **read** side — MSConvert reading the raw `.D` folder from the network share. The simplest remedy is to copy the raw folder(s) to a local drive first and run the pipeline against that local copy.
+
+---
+
 ### Getting Help
 
 **Check Console Output:**

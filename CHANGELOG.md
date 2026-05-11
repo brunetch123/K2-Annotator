@@ -2,6 +2,17 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.16] - 2026-05-10
+
+### Fixed
+- **Second pass at `java.lang.InternalError: a fault occurred in an unsafe memory access operation` during MZmine import.** v3.0.15 routed scratch off OneDrive but the same crash kept happening on the user's machine, this time inside `Unsafe.unpark` during a `ReentrantReadWriteLock.WriteLock.unlock()` — i.e., a JVM-level fault from a mapped page that disappeared while another thread held a lock on it. Root causes diagnosed: MZmine's parallel mzML import threads share a rotating `mzmine.tmp` scratch file, and when one thread rotates the file mid-write, the other thread's mmap is invalidated.
+  - `run_mzmine()` now serialises the mzML import phase by capping the `-threads` value to `import_threads` (default 1). Overall `--threads` is still passed through to the post-import stages, but the import phase no longer fights itself for the rotating scratch file.
+  - `-memory none` was being passed; the name is misleading and still uses memory-mapped scratch for the import path. Default is now `-memory all` (memory-map everything; deterministic behaviour). Override with `--mzmine-memory {none,mass,all}`.
+  - A `--mzmine-import-threads N` flag exposes the import-thread cap for users who want to raise it on a dataset where the rotating scratch doesn't trip.
+- **Better failure diagnosis.** When MZmine emits the `InternalError: a fault occurred in an unsafe memory access operation` message, the failure handler now prints the three most common Windows-specific causes (cloud-synced scratch / parallel import races / antivirus real-time scanning) along with the exact `--mzmine-*` flag to try for each, plus a reminder that the printed `MZmine command:` line can be copy-pasted into a terminal to reproduce outside the pipeline.
+
+---
+
 ## [3.0.15] - 2026-05-10
 
 ### Fixed

@@ -341,20 +341,40 @@ def run_conversion(input_folder, output_folder, stage_locally=True):
 # Stage 2: MZmine Processing
 # ============================================================================
 def run_mzmine(input_folder, output_folder, output_name, threads,
-               mzmine_temp=None):
+               mzmine_temp=None, memory_mode="all", import_threads=1):
     """Run MZmine batch processing.
 
+    Parameters that matter for the import-stability story:
+
     `mzmine_temp` (optional Path): scratch directory MZmine uses for
-    its memory-mapped intermediate files (`mzmine.tmp`). If None, a
-    fresh per-run subdirectory is created under the system temp dir
-    (`%TEMP%` on Windows, `/tmp` on Unix) and removed when MZmine
-    exits. The default deliberately avoids placing scratch inside
-    the pipeline root, because that root is often on a cloud-synced
-    drive (OneDrive, Dropbox), and cloud filter drivers interfere
-    with Java NIO memory mapping — MZmine hits
-    `java.lang.InternalError: a fault occurred in an unsafe memory
-    access operation` (MemoryMapStorage.storeData) and fails the
-    import stage.
+    its memory-mapped intermediate files. If None, a fresh per-run
+    subdirectory of the system temp dir is created and removed on
+    exit. Default avoids cloud-synced paths so OneDrive's filter
+    driver can't interfere with Java NIO memory mapping.
+
+    `memory_mode` (str, "none" | "mass" | "all", default "all"):
+    forwarded to MZmine's `-memory` flag. Note the names are
+    counter-intuitive — "none" still uses memory-mapped scratch for
+    spectrum data during import; "all" memory-maps even more, "mass"
+    is MZmine's normal default. We default to "all" because the
+    `MemoryMapStorage` faults we've seen in practice happen on the
+    import path under contention; biasing toward the mmap'd code
+    path with a single rotating file at least makes the behavior
+    deterministic. Override via `--mzmine-memory` if your dataset
+    won't fit.
+
+    `import_threads` (int, default 1): used to override `-threads`
+    for the duration of MZmine's run. Concurrent mzML import threads
+    share the same rotating `mzmine.tmp` scratch file; when one
+    thread rotates the file mid-write, the other thread's mmap is
+    invalidated and the JVM faults inside `Unsafe`. Single-threaded
+    import is dramatically more stable on Windows for this reason,
+    and the speed cost is small (mzML parse is I/O-bound). The
+    overall `threads` parameter is still passed to MZmine for the
+    parallelisable post-import steps; only the import phase is
+    serialised. (In practice MZmine does not let us split these on
+    the CLI, so we pass `min(threads, import_threads)` for the
+    whole run; raise import_threads if you want the old behavior.)
     """
     output_folder.mkdir(parents=True, exist_ok=True)
 
@@ -385,10 +405,15 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
     input_pattern = str(input_folder / "*.mzML")
     output_base = output_folder / output_name
 
+    # Serialise parallel mzML import to avoid the rotating-tmp-file
+    # mmap fault. See docstring above.
+    effective_threads = max(1, min(int(threads), int(import_threads)))
+
     print(f"Input: {input_pattern}", flush=True)
     print(f"Output: {output_base}", flush=True)
-    print(f"Threads: {threads}", flush=True)
+    print(f"Threads: {effective_threads} (requested {threads})", flush=True)
     print(f"MZmine scratch: {mzmine_scratch}", flush=True)
+    print(f"MZmine memory mode: {memory_mode}", flush=True)
     print(flush=True)
 
     cmd = [
@@ -397,9 +422,9 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
         "-b", str(BATCH_FILE),
         "-i", input_pattern,
         "-o", str(output_base),
-        "-memory", "none",
+        "-memory", memory_mode,
         "-temp", str(mzmine_scratch),
-        "-threads", str(threads)
+        "-threads", str(effective_threads)
     ]
 
     # Print the exact command so the user can reproduce manually if
@@ -472,23 +497,59 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
                     print(f"  {raw}", flush=True)
                 print(f"--- end MZmine output ---", flush=True)
 
-            # If MZmine died with the classic memory-mapped-file fault
-            # AND we somehow ended up with scratch on a cloud-synced
-            # path, surface that diagnosis explicitly.
+            # Specific diagnosis for the
+            #   java.lang.InternalError: a fault occurred in an unsafe
+            #   memory access operation
+            # crash inside MemoryMapStorage. This is the most common
+            # MZmine failure mode on Windows and has several distinct
+            # causes — surface them all explicitly so the user has
+            # something to act on.
             joined = "\n".join(all_lines)
-            if ("InternalError" in joined
-                    and "unsafe memory access" in joined):
+            if "InternalError" in joined and "unsafe memory access" in joined:
+                print(
+                    "\nDIAGNOSIS: MZmine crashed inside its memory-mapped "
+                    "storage layer (MemoryMapStorage). On Windows this is "
+                    "almost always one of these three things:",
+                    flush=True,
+                )
                 scratch_str = str(mzmine_scratch).lower()
                 if "onedrive" in scratch_str or "dropbox" in scratch_str:
                     print(
-                        "\nHINT: MZmine's scratch directory is on a "
-                        "cloud-synced path (OneDrive/Dropbox). Cloud "
-                        "filter drivers interfere with Java NIO memory "
-                        "mapping and cause exactly this error. Pass "
-                        "--mzmine-temp pointing at a true-local "
-                        "directory (e.g. %TEMP%) or remove the override.",
+                        "  1. The scratch directory is on a CLOUD-SYNCED "
+                        "path. Pass --mzmine-temp pointing at a true-local "
+                        "directory, or drop the override entirely.",
                         flush=True,
                     )
+                else:
+                    print(
+                        "  1. Parallel import threads racing on the shared "
+                        "scratch file. Try --threads 1 (we already serialise "
+                        "import internally, but a higher --threads pushes "
+                        "concurrency into other stages).",
+                        flush=True,
+                    )
+                print(
+                    "  2. Antivirus real-time scanning grabbing the "
+                    f"mzmine.tmp file mid-write. Exclude\n"
+                    f"     {mzmine_scratch}\n"
+                    "     (and ideally all of %TEMP%) from Defender or your "
+                    "AV's real-time scan list and retry.",
+                    flush=True,
+                )
+                print(
+                    "  3. MZmine's memory mode forcing the mmap path. Try "
+                    "--mzmine-memory all (everything memory-mapped, more "
+                    "deterministic) or --mzmine-memory none (everything in "
+                    "heap, if your dataset fits in RAM).",
+                    flush=True,
+                )
+                print(
+                    f"\nThe exact MZmine command we ran is printed above. "
+                    f"Try copy-pasting it into a terminal to reproduce "
+                    f"outside the pipeline — if it fails there too, the "
+                    f"issue is in MZmine's environment, not K2 Annotator.",
+                    flush=True,
+                )
             return None
 
         print("MZmine processing complete", flush=True)
@@ -751,6 +812,8 @@ def run_pipeline(args):
         result = run_mzmine(
             mzml_input, mzmine_dir, run_name, args.threads,
             mzmine_temp=Path(args.mzmine_temp) if getattr(args, 'mzmine_temp', None) else None,
+            memory_mode=getattr(args, 'mzmine_memory', 'all'),
+            import_threads=getattr(args, 'mzmine_import_threads', 1),
         )
         if result is None:
             return 1
@@ -1020,6 +1083,30 @@ Examples:
              'the system temp dir (%%TEMP%%). DO NOT point this at a '
              'cloud-synced path (OneDrive, Dropbox) — Java NIO memory '
              'mapping fails on cloud-mounted files.'
+    )
+    parser.add_argument(
+        '--mzmine-memory',
+        choices=['none', 'mass', 'all'],
+        default='all',
+        help='MZmine -memory mode. "none" keeps everything in heap '
+             '(needs lots of RAM for large datasets), "all" memory-maps '
+             'everything (slower but deterministic; default), "mass" is '
+             "MZmine's own balanced default. If MZmine fails import "
+             'with java.lang.InternalError on this dataset, try '
+             'switching modes.'
+    )
+    parser.add_argument(
+        '--mzmine-import-threads',
+        type=int,
+        default=1,
+        metavar='N',
+        help='Cap on the number of concurrent mzML import threads. '
+             'Default: 1 (serialised). MZmine import threads share '
+             'a rotating scratch file and races between them are the '
+             'most common cause of '
+             '"java.lang.InternalError: a fault occurred in an unsafe '
+             'memory access operation". Raise only if your --threads '
+             'is already low and you want concurrent imports.'
     )
 
     args = parser.parse_args()

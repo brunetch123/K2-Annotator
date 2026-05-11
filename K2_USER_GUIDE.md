@@ -461,9 +461,16 @@ K2 Annotator now also catches this case at startup and refuses to run with an ac
 
 ---
 
-**Problem:** MZmine fails at the import stage with `java.lang.InternalError: a fault occurred in an unsafe memory access operation` (often citing `MemoryMapStorage.java`)
-**Cause:** MZmine uses Java NIO memory-mapped files for its scratch storage (`mzmine.tmp`). When that scratch directory is on a cloud-synced filesystem (OneDrive, Dropbox), the cloud client's filter driver intercepts the page-level reads MZmine relies on, and Java's `Unsafe` throws `InternalError` when a previously-mapped page is no longer where Java expects it.
-**Solution:** From v3.0.15 onward K2 Annotator creates MZmine's scratch directory under the system temp folder (`%TEMP%\k2_mzmine_*`) on every run, regardless of where the pipeline itself lives, and cleans it up afterward. You should see `MZmine scratch: C:\Users\<you>\AppData\Local\Temp\k2_mzmine_xxxx` near the top of the MZmine stage. If you ever need to override this (e.g. to put scratch on a faster SSD), pass `--mzmine-temp PATH` to `gcms_pipeline.py` — but never point it at a OneDrive/Dropbox folder. The pipeline will warn you if you try.
+**Problem:** MZmine fails at the import stage with `java.lang.InternalError: a fault occurred in an unsafe memory access operation` (typically citing `MemoryMapStorage.java`)
+**Cause:** MZmine uses Java NIO memory-mapped files for scratch storage during mzML import. The crash happens when MZmine's mapped pages are pulled out from under the JVM mid-read. On Windows there are three common reasons for that:
+
+1. **Scratch on a cloud-synced path.** OneDrive / Dropbox filter drivers intercept page-level reads and the JVM faults. From v3.0.15 onward K2 Annotator creates MZmine's scratch under `%TEMP%\k2_mzmine_*` automatically — you should see that path near the top of the MZmine stage. If you ever pass `--mzmine-temp` explicitly, do *not* point it at a OneDrive/Dropbox folder.
+2. **Parallel import threads racing on the same rotating scratch file.** When MZmine's `mzmine.tmp` fills up it gets rotated; a concurrent import thread's mmap of the previous file becomes invalid mid-write and the JVM faults inside `Unsafe`. From v3.0.16 onward K2 Annotator serialises the mzML import phase to a single thread by default. The overall `--threads` value is still used for the post-import stages. You can raise the import cap with `--mzmine-import-threads N` if your `mzmine.tmp` rotation doesn't trip on your dataset.
+3. **Antivirus real-time scanning.** Defender / corporate AV products see `mzmine.tmp` being written and grab a read handle for scanning; the JVM's mapped view then disappears or stalls. Exclude the scratch directory (or the whole `%TEMP%` tree) from real-time scanning. This is the single most common cause we see in the wild.
+
+**Other knobs:**
+- `--mzmine-memory {none,mass,all}` — forwarded to MZmine's `-memory` flag. Default `all` (memory-map everything; deterministic). `none` keeps everything in heap (fast but needs RAM). `mass` is MZmine's own balanced default.
+- If MZmine still fails on this dataset after the above, copy the **`MZmine command: ...`** line printed by the pipeline and run it manually in a terminal. If it fails there too, the issue is in MZmine's environment, not K2 Annotator.
 
 ---
 

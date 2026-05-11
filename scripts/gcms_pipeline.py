@@ -341,7 +341,7 @@ def run_conversion(input_folder, output_folder, stage_locally=True):
 # Stage 2: MZmine Processing
 # ============================================================================
 def run_mzmine(input_folder, output_folder, output_name, threads,
-               mzmine_temp=None, memory_mode="mass", import_threads=1):
+               mzmine_temp=None, memory_mode="none", import_threads=1):
     """Run MZmine batch processing.
 
     Parameters that matter for the import-stability story:
@@ -352,20 +352,26 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
     exit. Default avoids cloud-synced paths so OneDrive's filter
     driver can't interfere with Java NIO memory mapping.
 
-    `memory_mode` (str, "none" | "mass" | "all", default "mass"):
-    forwarded to MZmine's `-memory` flag. Despite the naming:
-      * "none" — everything stays in the Java heap (highest heap
-        pressure; OK for small datasets when RAM is plentiful)
-      * "mass" — memory-map mass-spectrum data to disk, features in
-        heap (MZmine's own default; lowest heap pressure)
-      * "all"  — memory-map features to disk, spectra in heap
-        (somewhere between the other two)
-    We default to "mass" because the bulk of an mzML's bytes is the
-    spectra, so mapping that to disk gives the JVM the most heap
-    headroom. v3.0.16 briefly defaulted to "all" while chasing a
-    different bug — that caused JVM commit-memory failures on
-    machines with small Windows page files and is reverted in
-    v3.0.17.
+    `memory_mode` (str): forwarded to MZmine's `-memory` flag.
+    MZmine 4.x's `KeepInMemory.parse()` accepts:
+      * "none"            — nothing memory-mapped, all in JVM heap
+        (MZmine's own default; highest heap pressure)
+      * "all"             — everything memory-mapped to disk (lowest
+        heap pressure; safest on small Windows page files)
+      * "masses_features" — mass lists + features mapped to disk,
+        raw scans in heap
+      * "features"        — only features mapped
+      * "centroids"       — only mass lists mapped (alias for
+        MZmine's MASS_LISTS)
+      * "raw"             — only raw scans mapped
+    NOTE: pre-v3.0.18 versions of this pipeline defaulted to "mass",
+    which is NOT a valid value in MZmine 4 — `KeepInMemory.parse`
+    throws `IllegalStateException`, MZmine logs a non-fatal WARNING
+    ("Issue while reading keep in memory option from CLI argument"),
+    falls back to NONE internally, then exits with code 1 a few
+    steps later. We now default to "none" to match MZmine's own
+    fallback. If you hit JVM commit-memory failures on a Windows
+    machine with a small page file, try "all" or "masses_features".
 
     `import_threads` (int, default 1): used to override `-threads`
     for the duration of MZmine's run. Concurrent mzML import threads
@@ -413,11 +419,91 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
     # mmap fault. See docstring above.
     effective_threads = max(1, min(int(threads), int(import_threads)))
 
+    # Pre-flight disk-space check against the scratch directory.
+    # MZmine memory-maps mzML data into rotating temp files under
+    # `-temp`. When the disk fills up mid-import, the write truncates,
+    # the mapped region becomes invalid, and the next access faults
+    # with `java.lang.InternalError: a fault occurred in an unsafe
+    # memory access operation` (MemoryMapStorage.storeData line 206
+    # at time of writing). The user just sees a Java stack trace with
+    # no mention of disk space. Catching it here turns a confusing
+    # mid-run crash into a clear up-front error.
+    #
+    # Heuristic: MZmine's mmap scratch typically peaks at ~1–3x the
+    # total input mzML size depending on rotation count, deconv stage
+    # outputs, and how much survives the GC. We refuse below 1.5x and
+    # warn below 3x. These are calibrated to GC-EI workflows; LC-MS /
+    # IMS workflows may need more headroom.
+    try:
+        input_bytes = sum(p.stat().st_size for p in
+                          input_folder.glob("*.mzML"))
+    except OSError:
+        input_bytes = 0
+    try:
+        free_bytes = shutil.disk_usage(str(mzmine_scratch)).free
+    except OSError:
+        free_bytes = None
+
+    def _fmt_gb(n):
+        return f"{n / (1024**3):.1f} GB"
+
+    if input_bytes and free_bytes is not None:
+        required_min = int(input_bytes * 1.5)
+        recommended = int(input_bytes * 3)
+        if free_bytes < required_min:
+            print(f"  ERROR: Insufficient free disk space for MZmine "
+                  f"scratch.", flush=True)
+            print(f"         Input mzML total: "
+                  f"{_fmt_gb(input_bytes)}", flush=True)
+            print(f"         Free on scratch volume "
+                  f"({mzmine_scratch}): {_fmt_gb(free_bytes)}",
+                  flush=True)
+            print(f"         Required minimum (1.5x input): "
+                  f"{_fmt_gb(required_min)}", flush=True)
+            print(f"         Recommended (3x input): "
+                  f"{_fmt_gb(recommended)}", flush=True)
+            print(f"         MZmine memory-maps mzML data into "
+                  f"rotating temp files under -temp. When the disk",
+                  flush=True)
+            print(f"         fills up mid-import the next memory "
+                  f"access faults with `java.lang.InternalError: a "
+                  f"fault", flush=True)
+            print(f"         occurred in an unsafe memory access "
+                  f"operation` — no mention of disk space in the log.",
+                  flush=True)
+            print(f"         Fix: free space on the scratch volume, "
+                  f"or pass --mzmine-temp pointing at a different",
+                  flush=True)
+            print(f"         (true-local, non-cloud-synced) drive "
+                  f"with more headroom.", flush=True)
+            if scratch_is_owned and mzmine_scratch.exists():
+                shutil.rmtree(mzmine_scratch, ignore_errors=True)
+            return None
+        if free_bytes < recommended:
+            print(f"  WARNING: Free disk space on the MZmine scratch "
+                  f"volume ({mzmine_scratch}) is "
+                  f"{_fmt_gb(free_bytes)} —", flush=True)
+            print(f"           input mzML total is "
+                  f"{_fmt_gb(input_bytes)} and we recommend at least "
+                  f"3x ({_fmt_gb(recommended)}).", flush=True)
+            print(f"           If MZmine fails partway through import "
+                  f"with `java.lang.InternalError: a fault occurred",
+                  flush=True)
+            print(f"           in an unsafe memory access operation`, "
+                  f"the disk filled up — that's the cause.",
+                  flush=True)
+            print(f"           Either free space here or pass "
+                  f"--mzmine-temp pointing at a roomier drive.",
+                  flush=True)
+
     print(f"Input: {input_pattern}", flush=True)
     print(f"Output: {output_base}", flush=True)
     print(f"Threads: {effective_threads} (requested {threads})", flush=True)
     print(f"MZmine scratch: {mzmine_scratch}", flush=True)
     print(f"MZmine memory mode: {memory_mode}", flush=True)
+    if input_bytes and free_bytes is not None:
+        print(f"Scratch volume free: {_fmt_gb(free_bytes)} "
+              f"(input mzML total: {_fmt_gb(input_bytes)})", flush=True)
     print(flush=True)
 
     cmd = [
@@ -513,27 +599,58 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
                 print(
                     "\nDIAGNOSIS: MZmine crashed inside its memory-mapped "
                     "storage layer (MemoryMapStorage). On Windows this is "
-                    "almost always one of these three things:",
+                    "almost always one of these four things, in roughly "
+                    "decreasing order of likelihood:",
+                    flush=True,
+                )
+                # Disk-space diagnosis is FIRST because (a) the pre-flight
+                # check above might have run with a stale free-space
+                # reading, (b) MZmine's own log line at the point of
+                # failure is "Cannot memory map array of length N, not
+                # enough space left" — which sounds like a memory issue
+                # but is actually disk-space exhaustion, and users
+                # consistently miss it. Re-check live here so we can
+                # report the post-failure number.
+                try:
+                    free_now = shutil.disk_usage(str(mzmine_scratch)).free
+                    free_fmt = f"{free_now / (1024**3):.1f} GB"
+                except OSError:
+                    free_fmt = "unknown"
+                print(
+                    f"  1. The scratch volume ran OUT OF DISK SPACE during "
+                    f"import. MZmine memory-maps mzML data into rotating "
+                    f"temp files;\n"
+                    f"     when the disk fills mid-write the mapped region "
+                    f"becomes invalid and the next access faults. Current "
+                    f"free space\n"
+                    f"     on {mzmine_scratch}: {free_fmt}. If this number "
+                    f"is in the low-GB range relative to your input mzML "
+                    f"size,\n"
+                    f"     this is your problem — free space here or pass "
+                    f"--mzmine-temp pointing at a roomier drive.\n"
+                    f"     (MZmine's own \"Cannot memory map ... not "
+                    f"enough space left\" log line is misleading — it is "
+                    f"disk, not heap.)",
                     flush=True,
                 )
                 scratch_str = str(mzmine_scratch).lower()
                 if "onedrive" in scratch_str or "dropbox" in scratch_str:
                     print(
-                        "  1. The scratch directory is on a CLOUD-SYNCED "
+                        "  2. The scratch directory is on a CLOUD-SYNCED "
                         "path. Pass --mzmine-temp pointing at a true-local "
                         "directory, or drop the override entirely.",
                         flush=True,
                     )
                 else:
                     print(
-                        "  1. Parallel import threads racing on the shared "
+                        "  2. Parallel import threads racing on the shared "
                         "scratch file. Try --threads 1 (we already serialise "
                         "import internally, but a higher --threads pushes "
                         "concurrency into other stages).",
                         flush=True,
                     )
                 print(
-                    "  2. Antivirus real-time scanning grabbing the "
+                    "  3. Antivirus real-time scanning grabbing the "
                     f"mzmine.tmp file mid-write. Exclude\n"
                     f"     {mzmine_scratch}\n"
                     "     (and ideally all of %TEMP%) from Defender or your "
@@ -541,10 +658,12 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
                     flush=True,
                 )
                 print(
-                    "  3. MZmine's memory mode forcing the mmap path. Try "
+                    "  4. MZmine's memory mode forcing the mmap path. Try "
                     "--mzmine-memory all (everything memory-mapped, more "
                     "deterministic) or --mzmine-memory none (everything in "
-                    "heap, if your dataset fits in RAM).",
+                    "heap, if your dataset fits in RAM). Valid values for "
+                    "MZmine 4.x: none, all, features, centroids, raw, "
+                    "masses_features.",
                     flush=True,
                 )
                 print(
@@ -582,11 +701,15 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
                 )
                 print(
                     "  2. Lower MZmine's memory footprint by switching "
-                    "to --mzmine-memory mass (default in v3.0.17+). "
-                    "This memory-maps the bulk spectrum data to disk so "
-                    "the JVM doesn't try to hold it all in heap. If you "
-                    "are already on \"mass\" and still failing, the "
-                    "fix is on the OS side (item 1).",
+                    "to --mzmine-memory all (memory-map everything to "
+                    "disk) or --mzmine-memory masses_features (map the "
+                    "bulk data, keep raw scans in heap). If you are "
+                    "already memory-mapping and still failing, the fix "
+                    "is on the OS side (item 1). NOTE: pre-v3.0.18 "
+                    "this hint recommended --mzmine-memory mass, but "
+                    "\"mass\" is NOT a valid value in MZmine 4.x and "
+                    "is what caused the silent exit-1 you may have "
+                    "just hit on an earlier run.",
                     flush=True,
                 )
                 print(
@@ -859,7 +982,7 @@ def run_pipeline(args):
         result = run_mzmine(
             mzml_input, mzmine_dir, run_name, args.threads,
             mzmine_temp=Path(args.mzmine_temp) if getattr(args, 'mzmine_temp', None) else None,
-            memory_mode=getattr(args, 'mzmine_memory', 'mass'),
+            memory_mode=getattr(args, 'mzmine_memory', 'none'),
             import_threads=getattr(args, 'mzmine_import_threads', 1),
         )
         if result is None:
@@ -1133,18 +1256,21 @@ Examples:
     )
     parser.add_argument(
         '--mzmine-memory',
-        choices=['none', 'mass', 'all'],
-        default='mass',
-        help='MZmine -memory mode. "mass" (default, matches MZmine\'s '
-             'own default) memory-maps mass-spectrum data to disk and '
-             'keeps features in heap — lowest heap pressure, best for '
-             'large mzML files on machines with small page files. '
-             '"none" keeps everything in heap (highest heap pressure; '
-             'only sensible on small datasets with plentiful RAM). '
-             '"all" memory-maps features to disk and keeps spectra in '
-             'heap (rarely useful — usually the worst of both). If '
-             'MZmine fails with "paging file is too small" / '
-             'errno=1455, you are on this knob.'
+        choices=['none', 'all', 'features', 'centroids', 'raw',
+                 'masses_features'],
+        default='none',
+        help='MZmine `-memory` mode (MZmine 4.x KeepInMemory enum). '
+             '"none" (default, matches MZmine\'s own fallback) keeps '
+             'everything in the JVM heap. "all" memory-maps everything '
+             'to disk — lowest heap pressure, best for large mzML on '
+             'machines with small Windows page files. '
+             '"masses_features" maps mass lists + features but keeps '
+             'raw scans in heap. "features" / "centroids" / "raw" map '
+             'only the named layer. NOTE: pre-v3.0.18 of this pipeline '
+             'accepted "mass" here but that value is NOT valid in '
+             'MZmine 4 — it triggers a non-fatal WARNING then a silent '
+             'exit-1 a few steps later. If MZmine fails with "paging '
+             'file is too small" / errno=1455, try "all" first.'
     )
     parser.add_argument(
         '--mzmine-import-threads',

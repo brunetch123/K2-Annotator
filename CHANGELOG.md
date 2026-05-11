@@ -2,6 +2,19 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.18] - 2026-05-11
+
+### Fixed
+- **`-memory mass` was never a valid MZmine 4.x value.** v3.0.17 made `mass` the default `--mzmine-memory` based on a misread of MZmine's source — but in MZmine 4.x `KeepInMemory.parse("mass")` throws `IllegalStateException` (the valid values are `none`, `all`, `features`, `centroids`, `raw`, and `masses_features`). MZmine catches the exception, logs a non-fatal `WARNING io.github.mzmine.main.ArgsToConfigUtils checkAndOverrideArgsMemoryOption Issue while reading keep in memory option from CLI argument`, falls back internally to `NONE`, then exits 1 a few steps later with no `SEVERE`/`ERROR` line in the 200-line tail buffer. Users on v3.0.17 against any current MZmine 4 install saw this as a silent failure right after MZmine startup.
+  - Default `--mzmine-memory` is now `none`, which matches MZmine 4's own fallback when no `-memory` flag is passed.
+  - `--mzmine-memory` choices updated to the actual MZmine 4 enum: `none`, `all`, `features`, `centroids`, `raw`, `masses_features`.
+  - The previous v3.0.17 CHANGELOG entry's claim that `mass` was "MZmine's own default" is incorrect; the actual default is `NONE`. The page-file commit-memory failure that prompted the v3.0.17 revert was an OS-side disk/page-file sizing issue (see below), not a function of the memory mode.
+- **Disk-space exhaustion was masquerading as `InternalError: a fault occurred in an unsafe memory access operation`.** When MZmine's `-temp` scratch volume runs out of space mid-import, the rotating `mzmine.tmp` write truncates, the memory-mapped region becomes invalid, and the next `MemoryMapStorage.storeData` access faults via Unsafe.copyMemory. MZmine's own preceding `Cannot memory map array of length N, not enough space left` log message reads as a memory issue, but the "space" refers to disk. Users with low free space on `%TEMP%`'s drive hit this on any multi-GB dataset and were sent chasing antivirus / parallel-import / cloud-sync hypotheses that didn't apply.
+  - `run_mzmine()` now pre-flights free disk space on the resolved scratch volume against the total `*.mzML` input size. Refuses with a clear error below 1.5x input size; warns below 3x.
+  - When MZmine *does* fault with `InternalError: unsafe memory access`, the diagnosis handler now lists disk-space exhaustion as cause #1 (with the post-failure free-space figure re-read live), ahead of the existing cloud-sync / parallel-import / antivirus / memory-mode hypotheses.
+
+---
+
 ## [3.0.17] - 2026-05-10
 
 ### Fixed

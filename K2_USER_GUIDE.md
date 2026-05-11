@@ -461,6 +461,12 @@ K2 Annotator now also catches this case at startup and refuses to run with an ac
 
 ---
 
+**Problem:** MZmine fails at the import stage with `java.lang.InternalError: a fault occurred in an unsafe memory access operation` (often citing `MemoryMapStorage.java`)
+**Cause:** MZmine uses Java NIO memory-mapped files for its scratch storage (`mzmine.tmp`). When that scratch directory is on a cloud-synced filesystem (OneDrive, Dropbox), the cloud client's filter driver intercepts the page-level reads MZmine relies on, and Java's `Unsafe` throws `InternalError` when a previously-mapped page is no longer where Java expects it.
+**Solution:** From v3.0.15 onward K2 Annotator creates MZmine's scratch directory under the system temp folder (`%TEMP%\k2_mzmine_*`) on every run, regardless of where the pipeline itself lives, and cleans it up afterward. You should see `MZmine scratch: C:\Users\<you>\AppData\Local\Temp\k2_mzmine_xxxx` near the top of the MZmine stage. If you ever need to override this (e.g. to put scratch on a faster SSD), pass `--mzmine-temp PATH` to `gcms_pipeline.py` — but never point it at a OneDrive/Dropbox folder. The pipeline will warn you if you try.
+
+---
+
 **Problem:** MSConvert appears stuck for hours during the "writing to mzML" stage
 **Cause:** Your output folder is on a network share (Z:, an SMB mount, a VPN-mounted volume, etc.). MSConvert writes the `.mzML` output incrementally with frequent fsyncs; doing that against a high-latency network filesystem can stretch a minute of conversion into many hours of wall time, because each write round-trips over the network.
 **Solution:** From v3.0.13 onward K2 Annotator stages each conversion through a fast local temp directory (default `%TEMP%\k2_msconvert_*`) and copies the finished `.mzML` to the requested output folder in one shot. This is on by default — you should see a `Staging directory:` line at the top of the conversion stage. If you ever want to skip the staging step (e.g. because your output is already on a fast local SSD and you want to avoid the extra copy), pass `--no-stage-locally` to `gcms_pipeline.py`.

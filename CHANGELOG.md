@@ -2,6 +2,16 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.15] - 2026-05-10
+
+### Fixed
+- **MZmine import no longer crashes with `java.lang.InternalError: a fault occurred in an unsafe memory access operation` when the pipeline lives on OneDrive.** Root cause: `TEMP_DIR` was hardcoded to `PIPELINE_ROOT / "temp"`, and `gcms_pipeline.py` passed that to MZmine via `-temp`. On installs where the pipeline root is in OneDrive, MZmine's memory-mapped scratch files (`mzmine.tmp`) ended up under OneDrive's filter driver, which interferes with Java NIO page-level access and causes `Unsafe` to throw `InternalError` mid-import. `run_mzmine()` now creates MZmine's scratch as a fresh per-run subdirectory of the system temp folder (`%TEMP%\k2_mzmine_*`) and cleans it up on exit. The pipeline root location no longer affects MZmine's scratch location.
+- New `--mzmine-temp PATH` override for users who want scratch on a specific local SSD. The pipeline warns loudly if the override path contains "onedrive" or "dropbox".
+- When MZmine fails with the memory-mapped-file fault AND the scratch dir looks cloud-synced (only possible via explicit `--mzmine-temp`), the failure handler now emits a hint pointing at the root cause.
+- Documented in `K2_USER_GUIDE.md` under "Troubleshooting".
+
+---
+
 ## [3.0.14] - 2026-05-10
 
 ### Fixed

@@ -340,19 +340,57 @@ def run_conversion(input_folder, output_folder, stage_locally=True):
 # ============================================================================
 # Stage 2: MZmine Processing
 # ============================================================================
-def run_mzmine(input_folder, output_folder, output_name, threads):
-    """Run MZmine batch processing."""
-    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+def run_mzmine(input_folder, output_folder, output_name, threads,
+               mzmine_temp=None):
+    """Run MZmine batch processing.
+
+    `mzmine_temp` (optional Path): scratch directory MZmine uses for
+    its memory-mapped intermediate files (`mzmine.tmp`). If None, a
+    fresh per-run subdirectory is created under the system temp dir
+    (`%TEMP%` on Windows, `/tmp` on Unix) and removed when MZmine
+    exits. The default deliberately avoids placing scratch inside
+    the pipeline root, because that root is often on a cloud-synced
+    drive (OneDrive, Dropbox), and cloud filter drivers interfere
+    with Java NIO memory mapping — MZmine hits
+    `java.lang.InternalError: a fault occurred in an unsafe memory
+    access operation` (MemoryMapStorage.storeData) and fails the
+    import stage.
+    """
     output_folder.mkdir(parents=True, exist_ok=True)
-    
+
+    # Resolve the MZmine scratch directory:
+    #   - If the caller passed an explicit path, use it (and create
+    #     it). This is the override path for users who know what
+    #     they're doing.
+    #   - Otherwise, make a fresh per-run temp dir under the
+    #     guaranteed-local system temp, and clean it up on exit.
+    if mzmine_temp is not None:
+        mzmine_scratch = Path(mzmine_temp)
+        mzmine_scratch.mkdir(parents=True, exist_ok=True)
+        scratch_is_owned = False
+        # Warn loudly if an explicitly-passed path looks like a
+        # cloud-synced location.
+        scratch_str = str(mzmine_scratch).lower()
+        if "onedrive" in scratch_str or "dropbox" in scratch_str:
+            print(f"  WARNING: MZmine scratch directory {mzmine_scratch} "
+                  f"looks like a cloud-synced path. MZmine uses memory-"
+                  f"mapped files there, and cloud filter drivers can "
+                  f"cause java.lang.InternalError on import. Strongly "
+                  f"recommend pointing --mzmine-temp at a true-local "
+                  f"directory (e.g. %TEMP%).", flush=True)
+    else:
+        mzmine_scratch = Path(tempfile.mkdtemp(prefix="k2_mzmine_"))
+        scratch_is_owned = True
+
     input_pattern = str(input_folder / "*.mzML")
     output_base = output_folder / output_name
-    
-    print(f"Input: {input_pattern}")
-    print(f"Output: {output_base}")
-    print(f"Threads: {threads}")
-    print()
-    
+
+    print(f"Input: {input_pattern}", flush=True)
+    print(f"Output: {output_base}", flush=True)
+    print(f"Threads: {threads}", flush=True)
+    print(f"MZmine scratch: {mzmine_scratch}", flush=True)
+    print(flush=True)
+
     cmd = [
         str(MZMINE),
         "-u", str(USER_FILE),
@@ -360,7 +398,7 @@ def run_mzmine(input_folder, output_folder, output_name, threads):
         "-i", input_pattern,
         "-o", str(output_base),
         "-memory", "none",
-        "-temp", str(TEMP_DIR),
+        "-temp", str(mzmine_scratch),
         "-threads", str(threads)
     ]
 
@@ -372,88 +410,94 @@ def run_mzmine(input_folder, output_folder, output_name, threads):
     print("-" * 40, flush=True)
 
     try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
-        )
-    except OSError as e:
-        # WinError 362 = ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING. Same
-        # diagnosis as the MSConvert path: the binary is a OneDrive
-        # placeholder and the provider isn't running.
-        if getattr(e, "winerror", None) == 362:
-            print(f"    ERROR: Cannot launch MZmine because a cloud-only "
-                  f"placeholder could not be hydrated.")
-            print(f"           Either start your cloud client (e.g. "
-                  f"OneDrive) so it can fetch the file, or")
-            print(f"           pin the software folder locally "
-                  f"(\"Always keep on this device\").")
-            print(f"           Underlying error: {e}")
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+        except OSError as e:
+            # WinError 362 = ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING.
+            if getattr(e, "winerror", None) == 362:
+                print(f"    ERROR: Cannot launch MZmine because a "
+                      f"cloud-only placeholder could not be hydrated.")
+                print(f"           Either start your cloud client (e.g. "
+                      f"OneDrive) so it can fetch the file, or")
+                print(f"           pin the software folder locally "
+                      f"(\"Always keep on this device\").")
+                print(f"           Underlying error: {e}")
+                return None
+            raise
+
+        # Rolling buffer so we can dump tail-of-log on failure.
+        from collections import deque
+        TAIL_LINES = 200
+        all_lines = deque(maxlen=TAIL_LINES)
+        error_lines = []
+
+        for line in process.stdout:
+            line = line.rstrip()
+            all_lines.append(line)
+            if any(tok in line for tok in
+                   ("SEVERE", "ERROR", "Exception", "Caused by", "Traceback")):
+                print(line, flush=True)
+                error_lines.append(line)
+            elif any(level in line for level in ("INFO", "WARNING")):
+                if len(line) > 100:
+                    line = line[:97] + "..."
+                print(line, flush=True)
+
+        process.wait()
+        print("-" * 40, flush=True)
+
+        if process.returncode != 0:
+            print(f"\nERROR: MZmine processing failed (exit code "
+                  f"{process.returncode})", flush=True)
+            if error_lines:
+                print("\nError lines captured:", flush=True)
+                for err in error_lines:
+                    print(f"  {err}", flush=True)
+            else:
+                print("\n(No SEVERE/ERROR/Exception lines were emitted. "
+                      "Last lines of MZmine output follow — they often "
+                      "show what went wrong, e.g. a Java startup fault, "
+                      "an unreadable .mzbatch, or a CLI usage error.)",
+                      flush=True)
+            if all_lines:
+                print(f"\n--- Last {len(all_lines)} line(s) of MZmine "
+                      f"output (verbatim) ---", flush=True)
+                for raw in all_lines:
+                    print(f"  {raw}", flush=True)
+                print(f"--- end MZmine output ---", flush=True)
+
+            # If MZmine died with the classic memory-mapped-file fault
+            # AND we somehow ended up with scratch on a cloud-synced
+            # path, surface that diagnosis explicitly.
+            joined = "\n".join(all_lines)
+            if ("InternalError" in joined
+                    and "unsafe memory access" in joined):
+                scratch_str = str(mzmine_scratch).lower()
+                if "onedrive" in scratch_str or "dropbox" in scratch_str:
+                    print(
+                        "\nHINT: MZmine's scratch directory is on a "
+                        "cloud-synced path (OneDrive/Dropbox). Cloud "
+                        "filter drivers interfere with Java NIO memory "
+                        "mapping and cause exactly this error. Pass "
+                        "--mzmine-temp pointing at a true-local "
+                        "directory (e.g. %TEMP%) or remove the override.",
+                        flush=True,
+                    )
             return None
-        raise
 
-    # Keep every line in a rolling buffer so we can dump the
-    # tail-of-log on failure. Without this, MZmine errors that don't
-    # contain "SEVERE"/"ERROR"/"INFO"/"WARNING" (Java startup faults,
-    # JVM crashes, exception lines printed directly to stderr, the
-    # "Usage:" banner emitted when a CLI arg is wrong, etc.) are
-    # silently dropped and the user sees only "ERROR: MZmine
-    # processing failed" with no context.
-    from collections import deque
-    TAIL_LINES = 200
-    all_lines = deque(maxlen=TAIL_LINES)
-    error_lines = []
-
-    for line in process.stdout:
-        line = line.rstrip()
-        all_lines.append(line)
-        # Always print SEVERE / ERROR / Exception / Caused by lines in
-        # full — they are the high-signal lines.
-        if any(tok in line for tok in
-               ("SEVERE", "ERROR", "Exception", "Caused by", "Traceback")):
-            print(line, flush=True)
-            error_lines.append(line)
-        elif any(level in line for level in ("INFO", "WARNING")):
-            # Truncate other recognized log lines so the GUI console
-            # doesn't drown in MZmine's verbose INFO output.
-            if len(line) > 100:
-                line = line[:97] + "..."
-            print(line, flush=True)
-        # Lines outside both filters are NOT printed live (keeps the
-        # console readable) but are retained in `all_lines` so we
-        # still see them if MZmine ultimately fails.
-
-    process.wait()
-    print("-" * 40, flush=True)
-
-    if process.returncode != 0:
-        print(f"\nERROR: MZmine processing failed (exit code "
-              f"{process.returncode})", flush=True)
-        if error_lines:
-            print("\nError lines captured:", flush=True)
-            for err in error_lines:
-                print(f"  {err}", flush=True)
-        else:
-            print("\n(No SEVERE/ERROR/Exception lines were emitted. "
-                  "Last lines of MZmine output follow — they often "
-                  "show what went wrong, e.g. a Java startup fault, "
-                  "an unreadable .mzbatch, or a CLI usage error.)",
-                  flush=True)
-        # Always dump the tail of the raw log on failure, even if
-        # error lines were captured — it usually contains the
-        # `Caused by:` chain we need.
-        if all_lines:
-            print(f"\n--- Last {len(all_lines)} line(s) of MZmine "
-                  f"output (verbatim) ---", flush=True)
-            for raw in all_lines:
-                print(f"  {raw}", flush=True)
-            print(f"--- end MZmine output ---", flush=True)
-        return None
-    
-    print("MZmine processing complete")
-    return output_folder
+        print("MZmine processing complete", flush=True)
+        return output_folder
+    finally:
+        # Clean up the scratch dir if we own it. Skip cleanup when the
+        # user passed an explicit --mzmine-temp.
+        if scratch_is_owned and mzmine_scratch.exists():
+            shutil.rmtree(mzmine_scratch, ignore_errors=True)
 
 
 # ============================================================================
@@ -704,7 +748,10 @@ def run_pipeline(args):
         current_step += 1
         print_step(current_step, total_steps, "Processing with MZmine")
         
-        result = run_mzmine(mzml_input, mzmine_dir, run_name, args.threads)
+        result = run_mzmine(
+            mzml_input, mzmine_dir, run_name, args.threads,
+            mzmine_temp=Path(args.mzmine_temp) if getattr(args, 'mzmine_temp', None) else None,
+        )
         if result is None:
             return 1
         
@@ -962,6 +1009,17 @@ Examples:
         default=None,
         metavar='PATH',
         help='Path to MZmine .mzbatch workflow (overrides bundled default)'
+    )
+    parser.add_argument(
+        '--mzmine-temp',
+        type=str,
+        default=None,
+        metavar='PATH',
+        help='Scratch directory MZmine uses for memory-mapped '
+             'intermediate files. Default: a per-run subdirectory of '
+             'the system temp dir (%%TEMP%%). DO NOT point this at a '
+             'cloud-synced path (OneDrive, Dropbox) — Java NIO memory '
+             'mapping fails on cloud-mounted files.'
     )
 
     args = parser.parse_args()

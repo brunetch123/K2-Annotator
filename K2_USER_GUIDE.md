@@ -469,7 +469,20 @@ K2 Annotator now also catches this case at startup and refuses to run with an ac
 3. **Antivirus real-time scanning.** Defender / corporate AV products see `mzmine.tmp` being written and grab a read handle for scanning; the JVM's mapped view then disappears or stalls. Exclude the scratch directory (or the whole `%TEMP%` tree) from real-time scanning. This is the single most common cause we see in the wild.
 
 **Other knobs:**
-- `--mzmine-memory {none,mass,all}` — forwarded to MZmine's `-memory` flag. Default `all` (memory-map everything; deterministic). `none` keeps everything in heap (fast but needs RAM). `mass` is MZmine's own balanced default.
+- `--mzmine-memory {none,mass,all}` — forwarded to MZmine's `-memory` flag. Default `mass` (memory-maps the bulk spectrum data to disk and keeps features in heap; this is also MZmine's own default and the lowest-heap-pressure option). `none` keeps everything in heap — only sensible for small datasets with plentiful RAM. `all` memory-maps features and keeps spectra in heap — rarely useful in practice.
+
+---
+
+**Problem:** MZmine fails mid-import with `OpenJDK 64-Bit Server VM warning: INFO: os::commit_memory(...) failed; error='The paging file is too small for this operation to complete' (DOS error/errno=1455)` and `There is insufficient memory for the Java Runtime Environment to continue`.
+**Cause:** Windows error 1455 (`ERROR_COMMITMENT_LIMIT`) means the JVM tried to commit more virtual memory than your machine has available across RAM + page file. The JVM heap is set proportional to system RAM by MZmine's launcher, so on a machine where the Windows page file is small or fixed-size, the JVM can fail to expand its heap mid-run. **This is a Windows configuration issue, not an MZmine bug.**
+**Solution (do this first):** Let Windows manage the page file dynamically.
+1. Press **Win + R**, type `sysdm.cpl`, press Enter.
+2. Advanced tab → Performance → **Settings**.
+3. Advanced tab → Virtual memory → **Change**.
+4. Tick **"Automatically manage paging file size for all drives"**.
+5. Click **OK**, restart Windows when prompted.
+
+**Fallback (if you can't change the page file):** Run with `--mzmine-memory mass` (this is the default in v3.0.17+, so just stay on the default). If still failing, you can edit `mzmine.vmoptions` in your MZmine install folder and set a smaller heap, e.g. `-Xmx2g`. The pipeline does not control MZmine's heap size directly.
 - If MZmine still fails on this dataset after the above, copy the **`MZmine command: ...`** line printed by the pipeline and run it manually in a terminal. If it fails there too, the issue is in MZmine's environment, not K2 Annotator.
 
 ---

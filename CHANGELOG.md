@@ -2,6 +2,14 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.17] - 2026-05-10
+
+### Fixed
+- **Default `--mzmine-memory` reverted to `mass`.** v3.0.16 defaulted to `all` while chasing the `MemoryMapStorage` race, but on the user's next run that change exposed a different failure: the JVM tried to commit a ~2.2 GB G1 heap region mid-import and Windows rejected it with `ERROR_COMMITMENT_LIMIT` ("paging file is too small", errno 1455). Reading the MZmine source more carefully: `-memory all` actually memory-maps *features* and keeps mass spectra in heap, which is exactly the wrong trade-off for typical mzML files where spectrum data is the bulk. `-memory mass` (MZmine's own default) memory-maps the bulk spectrum data and keeps features in heap — lowest heap pressure, most resilient on machines with small page files.
+- **New diagnosis hint** for the Windows commit-memory failure pattern: when the log contains `paging file is too small`, `errno=1455`, `commit_memory`, or the JVM's "insufficient memory for the Java Runtime Environment" banner, the failure handler now prints a Windows-page-file-sizing fix and a `mzmine.vmoptions` heap-tuning fallback.
+
+---
+
 ## [3.0.16] - 2026-05-10
 
 ### Fixed

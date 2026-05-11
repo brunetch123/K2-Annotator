@@ -341,7 +341,7 @@ def run_conversion(input_folder, output_folder, stage_locally=True):
 # Stage 2: MZmine Processing
 # ============================================================================
 def run_mzmine(input_folder, output_folder, output_name, threads,
-               mzmine_temp=None, memory_mode="all", import_threads=1):
+               mzmine_temp=None, memory_mode="mass", import_threads=1):
     """Run MZmine batch processing.
 
     Parameters that matter for the import-stability story:
@@ -352,16 +352,20 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
     exit. Default avoids cloud-synced paths so OneDrive's filter
     driver can't interfere with Java NIO memory mapping.
 
-    `memory_mode` (str, "none" | "mass" | "all", default "all"):
-    forwarded to MZmine's `-memory` flag. Note the names are
-    counter-intuitive — "none" still uses memory-mapped scratch for
-    spectrum data during import; "all" memory-maps even more, "mass"
-    is MZmine's normal default. We default to "all" because the
-    `MemoryMapStorage` faults we've seen in practice happen on the
-    import path under contention; biasing toward the mmap'd code
-    path with a single rotating file at least makes the behavior
-    deterministic. Override via `--mzmine-memory` if your dataset
-    won't fit.
+    `memory_mode` (str, "none" | "mass" | "all", default "mass"):
+    forwarded to MZmine's `-memory` flag. Despite the naming:
+      * "none" — everything stays in the Java heap (highest heap
+        pressure; OK for small datasets when RAM is plentiful)
+      * "mass" — memory-map mass-spectrum data to disk, features in
+        heap (MZmine's own default; lowest heap pressure)
+      * "all"  — memory-map features to disk, spectra in heap
+        (somewhere between the other two)
+    We default to "mass" because the bulk of an mzML's bytes is the
+    spectra, so mapping that to disk gives the JVM the most heap
+    headroom. v3.0.16 briefly defaulted to "all" while chasing a
+    different bug — that caused JVM commit-memory failures on
+    machines with small Windows page files and is reverted in
+    v3.0.17.
 
     `import_threads` (int, default 1): used to override `-threads`
     for the duration of MZmine's run. Concurrent mzML import threads
@@ -548,6 +552,49 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
                     f"Try copy-pasting it into a terminal to reproduce "
                     f"outside the pipeline — if it fails there too, the "
                     f"issue is in MZmine's environment, not K2 Annotator.",
+                    flush=True,
+                )
+
+            # Specific diagnosis for the JVM-level commit-memory failure
+            # we see on Windows machines with a small/fixed page file.
+            # Detect by both the OS error code (1455) and the JVM's
+            # human-readable banner.
+            if ("paging file is too small" in joined.lower()
+                    or "errno=1455" in joined
+                    or "commit_memory" in joined
+                    or "insufficient memory for the Java Runtime"
+                    in joined):
+                print(
+                    "\nDIAGNOSIS: The JVM could not commit virtual memory "
+                    "(Windows error 1455 / ERROR_COMMITMENT_LIMIT). This "
+                    "is a Windows page-file sizing problem, not an "
+                    "MZmine bug. Two ways to fix:",
+                    flush=True,
+                )
+                print(
+                    "  1. Increase the Windows page file. Settings → "
+                    "System → About → Advanced system settings → "
+                    "Performance Settings → Advanced → Virtual memory → "
+                    "Change. Tick \"Automatically manage paging file "
+                    "size for all drives\" (or set it to System Managed "
+                    "on C:). Re-run after the system finishes resizing.",
+                    flush=True,
+                )
+                print(
+                    "  2. Lower MZmine's memory footprint by switching "
+                    "to --mzmine-memory mass (default in v3.0.17+). "
+                    "This memory-maps the bulk spectrum data to disk so "
+                    "the JVM doesn't try to hold it all in heap. If you "
+                    "are already on \"mass\" and still failing, the "
+                    "fix is on the OS side (item 1).",
+                    flush=True,
+                )
+                print(
+                    f"\nNote that mzmine_console.exe sets its own JVM "
+                    f"heap size from your system RAM; this pipeline "
+                    f"does not control --Xmx directly. If you need a "
+                    f"smaller heap, edit mzmine.vmoptions in your "
+                    f"MZmine install.",
                     flush=True,
                 )
             return None
@@ -812,7 +859,7 @@ def run_pipeline(args):
         result = run_mzmine(
             mzml_input, mzmine_dir, run_name, args.threads,
             mzmine_temp=Path(args.mzmine_temp) if getattr(args, 'mzmine_temp', None) else None,
-            memory_mode=getattr(args, 'mzmine_memory', 'all'),
+            memory_mode=getattr(args, 'mzmine_memory', 'mass'),
             import_threads=getattr(args, 'mzmine_import_threads', 1),
         )
         if result is None:
@@ -1087,13 +1134,17 @@ Examples:
     parser.add_argument(
         '--mzmine-memory',
         choices=['none', 'mass', 'all'],
-        default='all',
-        help='MZmine -memory mode. "none" keeps everything in heap '
-             '(needs lots of RAM for large datasets), "all" memory-maps '
-             'everything (slower but deterministic; default), "mass" is '
-             "MZmine's own balanced default. If MZmine fails import "
-             'with java.lang.InternalError on this dataset, try '
-             'switching modes.'
+        default='mass',
+        help='MZmine -memory mode. "mass" (default, matches MZmine\'s '
+             'own default) memory-maps mass-spectrum data to disk and '
+             'keeps features in heap — lowest heap pressure, best for '
+             'large mzML files on machines with small page files. '
+             '"none" keeps everything in heap (highest heap pressure; '
+             'only sensible on small datasets with plentiful RAM). '
+             '"all" memory-maps features to disk and keeps spectra in '
+             'heap (rarely useful — usually the worst of both). If '
+             'MZmine fails with "paging file is too small" / '
+             'errno=1455, you are on this knob.'
     )
     parser.add_argument(
         '--mzmine-import-threads',

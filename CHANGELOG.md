@@ -2,6 +2,17 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.14] - 2026-05-10
+
+### Fixed
+- **MZmine failures no longer surface as a blank log followed by "ERROR: MZmine processing failed".** The previous output reader filter dropped any line that didn't contain `SEVERE`, `ERROR`, `INFO`, or `WARNING` — so JVM startup faults, Java `Exception` / `Caused by:` chains, `usage:` banners (emitted when a CLI arg is wrong), and bare stack frames were silently discarded, leaving the user with no diagnostic. The reader now:
+  - Also matches `Exception`, `Caused by`, and `Traceback` for live-print.
+  - Keeps every line in a 200-line rolling buffer.
+  - On non-zero exit, dumps that buffer verbatim under `--- Last N line(s) of MZmine output ---` so the actual failure is visible.
+- The exact MZmine command is now printed before the run, so the user can copy it into a terminal and reproduce the failure manually if needed.
+
+---
+
 ## [3.0.13] - 2026-05-10
 
 ### Fixed

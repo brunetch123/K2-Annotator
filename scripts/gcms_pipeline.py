@@ -363,9 +363,13 @@ def run_mzmine(input_folder, output_folder, output_name, threads):
         "-temp", str(TEMP_DIR),
         "-threads", str(threads)
     ]
-    
-    print("MZmine log (filtered):")
-    print("-" * 40)
+
+    # Print the exact command so the user can reproduce manually if
+    # something goes wrong below.
+    print(f"MZmine command: {' '.join(cmd)}", flush=True)
+    print(flush=True)
+    print("MZmine log (filtered):", flush=True)
+    print("-" * 40, flush=True)
 
     try:
         process = subprocess.Popen(
@@ -390,28 +394,62 @@ def run_mzmine(input_folder, output_folder, output_name, threads):
             return None
         raise
 
+    # Keep every line in a rolling buffer so we can dump the
+    # tail-of-log on failure. Without this, MZmine errors that don't
+    # contain "SEVERE"/"ERROR"/"INFO"/"WARNING" (Java startup faults,
+    # JVM crashes, exception lines printed directly to stderr, the
+    # "Usage:" banner emitted when a CLI arg is wrong, etc.) are
+    # silently dropped and the user sees only "ERROR: MZmine
+    # processing failed" with no context.
+    from collections import deque
+    TAIL_LINES = 200
+    all_lines = deque(maxlen=TAIL_LINES)
     error_lines = []
+
     for line in process.stdout:
         line = line.rstrip()
-        # Always capture SEVERE and ERROR lines in full
-        if "SEVERE" in line or "ERROR" in line:
-            print(line)  # Print full error line
+        all_lines.append(line)
+        # Always print SEVERE / ERROR / Exception / Caused by lines in
+        # full — they are the high-signal lines.
+        if any(tok in line for tok in
+               ("SEVERE", "ERROR", "Exception", "Caused by", "Traceback")):
+            print(line, flush=True)
             error_lines.append(line)
-        elif any(level in line for level in ["INFO", "WARNING"]):
-            # Truncate other log lines
+        elif any(level in line for level in ("INFO", "WARNING")):
+            # Truncate other recognized log lines so the GUI console
+            # doesn't drown in MZmine's verbose INFO output.
             if len(line) > 100:
                 line = line[:97] + "..."
-            print(line)
+            print(line, flush=True)
+        # Lines outside both filters are NOT printed live (keeps the
+        # console readable) but are retained in `all_lines` so we
+        # still see them if MZmine ultimately fails.
 
     process.wait()
-    print("-" * 40)
+    print("-" * 40, flush=True)
 
     if process.returncode != 0:
-        print("\nERROR: MZmine processing failed")
+        print(f"\nERROR: MZmine processing failed (exit code "
+              f"{process.returncode})", flush=True)
         if error_lines:
-            print("\nError details:")
+            print("\nError lines captured:", flush=True)
             for err in error_lines:
-                print(f"  {err}")
+                print(f"  {err}", flush=True)
+        else:
+            print("\n(No SEVERE/ERROR/Exception lines were emitted. "
+                  "Last lines of MZmine output follow — they often "
+                  "show what went wrong, e.g. a Java startup fault, "
+                  "an unreadable .mzbatch, or a CLI usage error.)",
+                  flush=True)
+        # Always dump the tail of the raw log on failure, even if
+        # error lines were captured — it usually contains the
+        # `Caused by:` chain we need.
+        if all_lines:
+            print(f"\n--- Last {len(all_lines)} line(s) of MZmine "
+                  f"output (verbatim) ---", flush=True)
+            for raw in all_lines:
+                print(f"  {raw}", flush=True)
+            print(f"--- end MZmine output ---", flush=True)
         return None
     
     print("MZmine processing complete")

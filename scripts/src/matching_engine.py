@@ -5,6 +5,11 @@ from src.rhrmf import calculate_rhrmf, is_library_high_res, FormulaExplainer
 from src.is_normalizer import InternalStandardNormalizer
 import bisect
 import time
+# K2_DIAG: temporary diagnostic — see _diag_* methods. Remove with the
+# rest of the K2_DIAG-tagged blocks when the HR-matching investigation
+# is done.
+import csv
+import os
 
 class MatchCandidate:
     def __init__(self, library_compound, scores, error_ri):
@@ -58,6 +63,17 @@ class MatchingEngine:
         self.explainer = FormulaExplainer()
 
         self.results = {}
+
+        # K2_DIAG: per-candidate scoring trace, gated on env var. Used
+        # to investigate why high-res libraries produce fewer Level-2
+        # matches than low-res. When K2_DIAG_MATCHING_CSV is set, every
+        # candidate that survives the RI bisect window is recorded —
+        # whether it passed/failed the RI %-error, dot-product, and
+        # RHRMF gates — and the CSV is written after run_matching().
+        # When unset, _diag_path is None and the diag captures are
+        # no-ops. Remove ALL K2_DIAG-tagged blocks to revert.
+        self._diag_path = os.environ.get('K2_DIAG_MATCHING_CSV') or None
+        self._diag_rows = []
 
     def load_data(self):
         print("--- Loading Data ---")
@@ -166,28 +182,34 @@ class MatchingEngine:
             
             for i in range(start_idx, end_idx):
                 lib_comp = library[i]
-                
+
                 # Double Check: RI % Error (< 1.5%)
                 delta_ri = abs(feat.ri - lib_comp.ri)
                 percent_error = (delta_ri / feat.ri) * 100 if feat.ri > 0 else 100
-                
+
                 if percent_error > 1.5:
+                    # K2_DIAG: record candidate as failing RI %-error gate
+                    self._diag_capture(
+                        feat=feat, lib_comp=lib_comp,
+                        delta_ri=delta_ri, ri_pct_error=percent_error,
+                        passed_ri=False, gate_failed='ri_pct',
+                    )
                     continue
-                    
+
                 # 4. Spectral Matching (Unit Res)
                 # Only run expensive math if RI passes
                 dot, rev_dot = calculate_scores(feat.spectrum, lib_comp.spectrum)
-                
+
+                # K2_DIAG: classify HR up-front so the diagnostic can see
+                # is_hr for every candidate, not just those that pass dots.
+                is_hr = is_library_high_res(lib_comp.spectrum)
+
                 # 5. Thresholds (Level 2 Criteria)
                 # Rev Dot > 600 AND Dot > 500
                 if rev_dot > 600 and dot > 500:
                     cand = MatchCandidate(lib_comp, (dot, rev_dot), delta_ri)
-                    
-                    # --- Phase 4 Logic ---
-                    # Check High Res status
-                    is_hr = is_library_high_res(lib_comp.spectrum)
                     cand.is_high_res_match = is_hr
-                    
+
                     if is_hr:
                         # High Res Library Match: Pass automatically (assuming spectral score holds)
                         cand.rhrmf_score = 100.0 # Placeholder
@@ -196,15 +218,40 @@ class MatchingEngine:
                         # Low Res Library Match: Must pass RHRMF > 75
                         score = calculate_rhrmf(feat.spectrum, lib_comp, self.explainer)
                         cand.rhrmf_score = score
-                        
+
                         if score > 75:
                             cand.final_pass = True
                         else:
                             cand.final_pass = False
-                    
+
                     # Only add if it passed the final High Res / RHRMF check
                     if cand.final_pass:
                         candidates.append(cand)
+
+                    # K2_DIAG: record candidate after dot+RHRMF evaluation
+                    self._diag_capture(
+                        feat=feat, lib_comp=lib_comp,
+                        delta_ri=delta_ri, ri_pct_error=percent_error,
+                        passed_ri=True,
+                        dot=dot, rev_dot=rev_dot,
+                        passed_dot_thresholds=True,
+                        is_hr=is_hr,
+                        rhrmf_score=cand.rhrmf_score,
+                        final_pass=cand.final_pass,
+                        gate_failed=(None if cand.final_pass else 'rhrmf'),
+                    )
+                else:
+                    # K2_DIAG: record candidate as failing dot-product gate
+                    self._diag_capture(
+                        feat=feat, lib_comp=lib_comp,
+                        delta_ri=delta_ri, ri_pct_error=percent_error,
+                        passed_ri=True,
+                        dot=dot, rev_dot=rev_dot,
+                        passed_dot_thresholds=False,
+                        is_hr=is_hr,
+                        rhrmf_score=None, final_pass=False,
+                        gate_failed='dot_product',
+                    )
             
             # Store if we found valid candidates
             if candidates:
@@ -216,5 +263,74 @@ class MatchingEngine:
         print(f"\nMatching Complete.")
         print(f"Features with Level 2 Matches (Post-RHRMF): {matches_found}")
 
+        # K2_DIAG: flush per-candidate trace to CSV if enabled
+        self._diag_flush_csv()
+
     def get_results(self):
         return self.results
+
+    # ====================================================================
+    # K2_DIAG: temporary diagnostic — investigate why HR libraries produce
+    # fewer Level 2 matches than LR. Enable by setting environment variable
+    # `K2_DIAG_MATCHING_CSV` to a writable CSV path before running the
+    # pipeline. No-op when the env var is unset. Remove this block AND
+    # all other K2_DIAG-tagged blocks above to revert.
+    # ====================================================================
+    _DIAG_FIELDNAMES = [
+        'feat_id', 'feat_ri', 'feat_peak_count',
+        'lib_index', 'lib_name', 'lib_ri', 'lib_formula',
+        'lib_peak_count', 'is_hr',
+        'delta_ri', 'ri_pct_error', 'passed_ri',
+        'dot', 'rev_dot', 'passed_dot_thresholds',
+        'rhrmf_score', 'final_pass',
+        'gate_failed',
+    ]
+
+    def _diag_capture(self, feat, lib_comp, **fields):
+        """Append one candidate-evaluation record to the in-memory trace.
+        No-op when the K2_DIAG_MATCHING_CSV env var is unset.
+
+        `feat` and `lib_comp` provide the always-present context columns;
+        `**fields` carries the gate-dependent columns (dot scores etc.)
+        with empties for gates that weren't reached on this candidate.
+        """
+        if self._diag_path is None:
+            return
+        row = {
+            'feat_id': feat.id,
+            'feat_ri': feat.ri,
+            'feat_peak_count': len(feat.spectrum),
+            'lib_index': getattr(lib_comp, 'library_index', None),
+            'lib_name': lib_comp.name,
+            'lib_ri': lib_comp.ri,
+            'lib_formula': lib_comp.formula,
+            'lib_peak_count': len(lib_comp.spectrum),
+        }
+        row.update(fields)
+        self._diag_rows.append(row)
+
+    def _diag_flush_csv(self):
+        """Write the captured candidate trace to K2_DIAG_MATCHING_CSV.
+        No-op when the env var is unset or when nothing was captured."""
+        if self._diag_path is None:
+            return
+        if not self._diag_rows:
+            print(f"[K2_DIAG] No candidates captured "
+                  f"(no features survived BFF + RI window?)")
+            return
+        try:
+            with open(self._diag_path, 'w', newline='',
+                      encoding='utf-8') as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=self._DIAG_FIELDNAMES,
+                    extrasaction='ignore')
+                writer.writeheader()
+                writer.writerows(self._diag_rows)
+            print(f"[K2_DIAG] Wrote {len(self._diag_rows)} candidate "
+                  f"row(s) to {self._diag_path}")
+        except OSError as e:
+            print(f"[K2_DIAG] Failed to write diagnostic CSV at "
+                  f"{self._diag_path}: {e}")
+    # ====================================================================
+    # K2_DIAG: end of diagnostic block
+    # ====================================================================

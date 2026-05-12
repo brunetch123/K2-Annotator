@@ -10,32 +10,66 @@ ATOM_MASSES = {
 
 def is_library_high_res(spectrum):
     """
-    Checks if the library spectrum is High Res.
-    Criteria: any peak's m/z has fractional component > 0.05 Da.
+    Classify a library spectrum as truly high-resolution.
 
-    v3.0.19: scans the full (post-trim) spectrum instead of only the
-    first 5 peaks. The May 2026 library audit found ~1,100 entries
-    where decimal m/z values exist later in the spectrum but the
-    leading peaks happen to be near-integer (M+, M-1, common
-    immonium ions, etc.). The old first-5-only rule misclassified
-    those as LR. Library spectra are now trimmed to top-N peaks by
-    intensity at load (library_parser.MAX_LIB_PEAKS_DEFAULT, default
-    20), so "scan all peaks" is cheap and consistent.
+    v3.0.21 rule: require at least 2 "real-HR" peaks (fractional m/z > 0.05,
+    excluding half-integer z=2 artifacts and 1-decimal-rounded m/z values)
+    AND require at least one such peak to be among the top 3 most intense
+    peaks. This forces HR classification to depend on the high-information
+    peaks of the spectrum, not on stray artifacts further down the
+    intensity ranking.
 
-    The 0.05 Da threshold is unchanged; it tolerates hydrocarbon-
-    only m/z values that sit close to integer (e.g., C6H6+ =
-    78.0469, frac=0.0469) being classified LR. If your HR library
-    contains many such entries you may want to tighten this.
+    A "real-HR" peak is one where:
+      - frac(mz) > 0.05            (not integer)
+      - frac(mz) NOT in [0.40, 0.60] (excludes 76.5, 160.5 z=2 artifacts)
+      - mz != round(mz, 1)         (excludes 93.1, 174.8 1-dp rounded m/z)
+
+    Background (May 2026 library audit on 97k-entry unified library):
+      Pre-v3.0.21 rule ("any peak with frac > 0.05") flagged 989 entries
+      as HR. Of those:
+        213 contained ONLY half-integer artifacts (Biphenyl, Naphthalene
+              etc. — bulk-LR with one or two z=2 doubly-charged peaks)
+        69  were 1-decimal-rounded (Sabinene "93.1, 91.1, ..." — clearly
+              not exact mass)
+        707 had at least one real-HR peak; 323 had real-HR in top-3 by
+              intensity.
+      The current 38 HR auto-passes in production v3.0.20 are ALL against
+      the 213 half-integer subset (37) plus 1 1-decimal-rounded entry
+      (Sabinene); zero against the 707 truly-HR entries. Tightening the
+      rule eliminates the misclassification source.
+
+    Returns True if the entry is genuinely HR for the purposes of
+    accurate-mass matching; False otherwise.
     """
     if not spectrum:
         return False
-    for mz, _ in spectrum:
+    # Sort by intensity descending so we can check "real-HR in top-3".
+    try:
+        sorted_by_intensity = sorted(
+            spectrum, key=lambda p: -float(p[1]))
+    except (TypeError, ValueError, IndexError):
+        return False
+
+    n_real_hr = 0
+    top3_has_real_hr = False
+    for i, peak in enumerate(sorted_by_intensity):
         try:
-            if abs(float(mz) - round(float(mz))) > 0.05:
-                return True
-        except (TypeError, ValueError):
+            mz = float(peak[0])
+        except (TypeError, ValueError, IndexError):
             continue
-    return False
+        frac = abs(mz - round(mz))
+        if frac <= 0.05:
+            continue  # near-integer — treat as LR
+        if 0.40 <= frac <= 0.60:
+            continue  # half-integer (z=2 doubly-charged ion artifact)
+        if abs(mz - round(mz, 1)) < 1e-6:
+            continue  # m/z stored at 1-decimal precision (rounded LR)
+        # Survived all the artifact filters — this is a real-HR peak.
+        n_real_hr += 1
+        if i < 3:
+            top3_has_real_hr = True
+
+    return n_real_hr >= 2 and top3_has_real_hr
 
 class FormulaExplainer:
     def __init__(self):

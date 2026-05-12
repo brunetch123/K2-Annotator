@@ -1,6 +1,10 @@
 from src.universal_parser import UniversalParser
 from src.library_parser import LibraryParser, MAX_LIB_PEAKS_DEFAULT
 from src.spectral_math import calculate_scores
+# v3.0.21: ppm-based HR-aware dot product, used as the production
+# scoring path for library entries classified as truly HR.
+from src.spectral_math import (calculate_scores_hr_aware,
+                               HR_DOT_TOLERANCE_PPM_DEFAULT)
 from src.rhrmf import (calculate_rhrmf, is_library_high_res,
                        FormulaExplainer)
 # K2_DIAG_VARIANT: side-by-side RHRMF variant scoring for Options 1/2/3.
@@ -230,29 +234,44 @@ class MatchingEngine:
                     cand.is_high_res_match = is_hr
 
                     if is_hr:
-                        # High Res Library Match: Pass automatically (assuming spectral score holds)
-                        cand.rhrmf_score = 100.0 # Placeholder
-                        cand.final_pass = True
+                        # v3.0.21: HR library entry. Replace the legacy
+                        # "auto-pass RHRMF" with an HR-aware dot product
+                        # at 10 ppm. Rationale:
+                        #   * The v3.0.20 HR auto-pass admitted matches
+                        #     based on unit-resolution dot product
+                        #     scores even though the library entry
+                        #     carried exact-mass information that was
+                        #     never exercised.
+                        #   * The May 2026 library audit + tightened
+                        #     is_library_high_res() means HR
+                        #     classification now requires real exact-
+                        #     mass evidence in the top-3 peaks. So
+                        #     when is_hr is True, we KNOW we have
+                        #     HR-grade data and should match on it.
+                        #   * 10 ppm matches Kwiecien 2015's empirical
+                        #     optimum (SI Fig 6) and K2's RHRMF
+                        #     tolerance. Same gate thresholds (>600 /
+                        #     >500) as the unit-resolution path —
+                        #     HR-aware scores are in the same range
+                        #     for true matches and drop sharply for
+                        #     coincidental unit-resolution alignment.
+                        # RHRMF is intentionally NOT run on HR
+                        # candidates here: the HR-aware dot product
+                        # IS the exact-mass discrimination, so RHRMF
+                        # would be redundant. The sentinel 100.0
+                        # rhrmf_score is retained for CSV continuity.
+                        hr_dot, hr_rev_dot = calculate_scores_hr_aware(
+                            feat.spectrum, lib_comp.spectrum,
+                            tolerance_ppm=HR_DOT_TOLERANCE_PPM_DEFAULT)
+                        cand.rhrmf_score = 100.0  # sentinel; no RHRMF run
+                        if hr_rev_dot > 600 and hr_dot > 500:
+                            cand.final_pass = True
+                        else:
+                            cand.final_pass = False
                     else:
-                        # Low Res Library Match: Must pass RHRMF > 75.
-                        # v3.0.20: production RHRMF now follows Kwiecien
-                        # 2015 (Anal. Chem. 87, 8328) more closely —
-                        # 10 ppm mass tolerance (was 0.015 Da fixed),
-                        # on-the-fly isotopologue substitution for
-                        # 13C / 37Cl / 81Br / 34S / 30Si, TIC-weighted
-                        # scoring (sum(mz*int)_annotated /
-                        # sum(mz*int)_observed). The previous behaviour
-                        # is preserved in calculate_rhrmf() (kept for
-                        # backwards-compatible diagnostic column
-                        # rhrmf_opt0 — see the K2_DIAG block below).
-                        # Threshold is unchanged at >75. The May 2026
-                        # comparison run showed this produces a cleaner
-                        # score distribution (median LR RHRMF ~95 vs ~84
-                        # under the legacy algorithm), recovers PAH
-                        # targets that legacy missed (pyrene,
-                        # fluoranthene, fluorene), and removes ~250
-                        # marginal Opt0 matches that didn't survive a
-                        # rigorous mass-accuracy check.
+                        # Low Res Library Match: must pass v3.0.20
+                        # Kwiecien-style RHRMF (10 ppm + isotopologues
+                        # + TIC-weighted) at >75.
                         score = calculate_rhrmf_variant(
                             feat.spectrum, lib_comp, self.explainer,
                             tolerance_ppm=10,

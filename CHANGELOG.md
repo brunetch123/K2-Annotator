@@ -2,6 +2,28 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.21] - 2026-05-12
+
+### Changed
+- **`is_library_high_res()` tightened to require real exact-mass evidence in the top-3 peaks.** The previous rule ("any peak in the trimmed top-20 has fractional m/z > 0.05") was tripped by half-integer doubly-charged ion artifacts (76.5, 160.5, etc.) and by entries stored at 1-decimal precision (93.1, 91.1, ...). The new rule requires (a) at least two "real-HR" peaks — fractional m/z > 0.05, NOT half-integer (0.40 ≤ frac ≤ 0.60 excluded), NOT 1-decimal-rounded — AND (b) at least one such peak among the top 3 by intensity. A May 2026 library audit on the 97k-entry unified library found the old rule had ~29% false-positive rate (282 of 989 K2-flagged-HR entries were artifacts); the new rule eliminates this misclassification source.
+- **`calculate_scores_hr_aware()` is now production scoring for HR library matches.** Previously HR library entries were "auto-passed" through RHRMF (sentinel score 100.0) based on unit-resolution dot product alone — meaning the library being HR was load-bearing for skipping RHRMF, but the HR mass precision was never actually used. v3.0.21 runs an HR-aware dot product using **10 ppm peak-pair matching** for HR library entries and gates on the same >600/>500 thresholds. RHRMF is intentionally not run on HR candidates: the HR-aware dot product itself uses exact-mass precision, so RHRMF would be redundant. The unit-resolution `calculate_scores()` is still used as a pre-filter (a candidate must first pass unit-res >600/>500 to reach HR-aware scoring); since HR-aware is strictly stricter than unit-res for true matches, the pre-filter is safe and cheap.
+- **`MatchingEngine.run_matching()` and `SurrogateAnalyzer._match_single_compound()` both wired to the new HR path.** LR library matches still use unit-resolution dot + the v3.0.20 Kwiecien-style RHRMF (10 ppm + isotopologues + TIC-weighted), unchanged.
+
+### Why this change
+- **Variant comparison (diag_run5, May 2026):** Variant A (v3.0.20 production, HR auto-pass) admitted 38 HR matches; Variant B (RHRMF for everyone) admitted 1; Variant C (HR-aware dot, this release) admitted 0 under the old loose HR detector. Drilling down: all 37 of the disagreement-bucket candidates (A passes, B/C fail) had RHRMF_opt3 < 75 AND HR-aware dot = 0. They were passing purely on coincidental unit-resolution alignment with library entries that K2 mis-classified as HR via half-integer artifacts. Variant A was admitting matches with no actual exact-mass evidence behind them.
+- **Tolerance choice (10 ppm):** Kwiecien 2015 (SI Fig 6) empirically determined 10 ppm as the optimum tradeoff between low-S/N fragment acceptance and formula discrimination on Q Exactive GC data. Same value as v3.0.20's RHRMF, so a peak that's "in" for RHRMF is also "in" for HR-aware dot. Typical Orbitrap GC mass accuracy is 1–5 ppm; 10 ppm provides ~2× headroom for real-world calibration drift without bleeding into noise.
+- **Algorithm choice (ppm peak-pairing, not fixed-Da binning):** Fixed Da binning at 0.01 Da gives wildly different effective ppm tolerances across the GC-MS mass range (~100 ppm at m/z 100, ~10 ppm at m/z 1000), defeating the point of an HR-aware approach. The new implementation uses greedy peak-pair matching with a ppm window that scales naturally with m/z.
+
+### Expected impact on match counts
+- Under the new HR detector + HR-aware dot, candidates against genuinely-HR library entries get a rigorous accurate-mass check; candidates against misclassified-LR library entries (half-integer artifacts) flow through the LR path with RHRMF instead. From the May 2026 diag_run5 data, the 37 HR auto-pass candidates that v3.0.20 admitted on the misclassified entries would be re-routed through RHRMF; based on their rhrmf_opt3 distribution (mostly 0–55), most would fail there too. Sabinene at feat_id 123 — the one solid auto-pass in v3.0.20 — has rhrmf_opt3=95.8, so it should still pass via the LR path under the new rules.
+- Final pass count expected: similar to Variant B in the diagnostic (~283) — substantially fewer than v3.0.20's 320 but with all matches now backed by actual exact-mass evidence rather than misclassification artifacts.
+
+### Backward compatibility
+- The legacy `calculate_rhrmf()` function and the diagnostic K2_DIAG/K2_DIAG_VARIANT instrumentation remain available for audit purposes (set `K2_DIAG_MATCHING_CSV`). The `K2_DIAG_DOTVAR` columns are not in this release because the v3.0.21 production behavior already incorporates HR-aware dot; the side-by-side comparison can still be retrieved by checking out `claude/dot-product-variants`.
+- Re-run prior analyses if matching score continuity matters; v3.0.21 changes which compounds pass and which don't for HR library entries.
+
+---
+
 ## [3.0.20] - 2026-05-12
 
 ### Changed

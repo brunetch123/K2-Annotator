@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 
 from src.library_parser import LibraryParser, LibraryCompound
 from src.spectral_math import calculate_scores
+# v3.0.21: HR-aware dot product for surrogate matching against HR libraries.
+from src.spectral_math import (calculate_scores_hr_aware,
+                               HR_DOT_TOLERANCE_PPM_DEFAULT)
 from src.rhrmf import (calculate_rhrmf, is_library_high_res,
                        FormulaExplainer)
 # v3.0.20: surrogate analysis uses the same RHRMF variant as suspect
@@ -216,13 +219,20 @@ class SurrogateAnalyzer:
             is_hr = is_library_high_res(compound.spectrum)
             
             if is_hr:
-                rhrmf_score = 100.0  # High-res passes automatically
-                passed_rhrmf = True
+                # v3.0.21: HR library — re-score with HR-aware dot
+                # product at 10 ppm and gate on the same >600/>500
+                # thresholds. RHRMF is skipped (the HR-aware dot is
+                # the exact-mass discrimination). Match suspect-
+                # screening logic in MatchingEngine.run_matching().
+                hr_dot, hr_rev_dot = calculate_scores_hr_aware(
+                    feat.spectrum, compound.spectrum,
+                    tolerance_ppm=HR_DOT_TOLERANCE_PPM_DEFAULT)
+                rhrmf_score = 100.0  # sentinel; no RHRMF run for HR
+                passed_rhrmf = (hr_rev_dot > self.REVERSE_DOT_MIN
+                                 and hr_dot > self.FORWARD_DOT_MIN)
             else:
                 # v3.0.20: same Kwiecien-style RHRMF as suspect screening
                 # — 10 ppm tolerance, isotopologues, TIC-weighted scoring.
-                # See matching_engine.run_matching() and the v3.0.20
-                # CHANGELOG entry for rationale and validation data.
                 rhrmf_score = calculate_rhrmf_variant(
                     feat.spectrum, compound, self.explainer,
                     tolerance_ppm=10,

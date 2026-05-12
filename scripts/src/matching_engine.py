@@ -234,20 +234,25 @@ class MatchingEngine:
                         cand.rhrmf_score = 100.0 # Placeholder
                         cand.final_pass = True
                     else:
-                        # Low Res Library Match: Must pass RHRMF > 75
-                        # TRIAL branch (claude/rhrmf-opt3-trial): production
-                        # RHRMF call now uses Option 3 from the May 2026
-                        # review — 10 ppm tolerance, isotopologues for
-                        # C/Cl/Br/S/Si, Kwiecien's TIC-weighted scoring
-                        # (Anal. Chem. 2015, 87, 8328). This is the
-                        # closest of the three rigorous variants to the
-                        # literature definition; the production code on
-                        # claude/diag-hr-matching used calculate_rhrmf()
-                        # (0.015 Da fixed tolerance, no isotopologues,
-                        # count-based). Threshold stays at 75 for an
-                        # apples-to-apples pass-count comparison; you
-                        # may want to retune it after looking at the
-                        # output distribution.
+                        # Low Res Library Match: Must pass RHRMF > 75.
+                        # v3.0.20: production RHRMF now follows Kwiecien
+                        # 2015 (Anal. Chem. 87, 8328) more closely —
+                        # 10 ppm mass tolerance (was 0.015 Da fixed),
+                        # on-the-fly isotopologue substitution for
+                        # 13C / 37Cl / 81Br / 34S / 30Si, TIC-weighted
+                        # scoring (sum(mz*int)_annotated /
+                        # sum(mz*int)_observed). The previous behaviour
+                        # is preserved in calculate_rhrmf() (kept for
+                        # backwards-compatible diagnostic column
+                        # rhrmf_opt0 — see the K2_DIAG block below).
+                        # Threshold is unchanged at >75. The May 2026
+                        # comparison run showed this produces a cleaner
+                        # score distribution (median LR RHRMF ~95 vs ~84
+                        # under the legacy algorithm), recovers PAH
+                        # targets that legacy missed (pyrene,
+                        # fluoranthene, fluorene), and removes ~250
+                        # marginal Opt0 matches that didn't survive a
+                        # rigorous mass-accuracy check.
                         score = calculate_rhrmf_variant(
                             feat.spectrum, lib_comp, self.explainer,
                             tolerance_ppm=10,

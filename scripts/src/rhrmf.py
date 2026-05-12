@@ -139,25 +139,34 @@ def calculate_rhrmf(feat_spectrum, lib_compound, explainer=None):
 
 
 # ========================================================================
-# K2_DIAG_VARIANT: side-by-side diagnostic implementations of RHRMF
-# corresponding to Options 1/2/3 from the May 2026 review against the
-# Kwiecien 2015 HRF and Koelmel 2022 RHRMF specifications.
+# v3.0.20: Kwiecien 2015 HRF / Koelmel 2022 RHRMF implementation.
 #
-# Option 0 (production above): fixed 0.015 Da tolerance, no isotopologues,
-#                              count-based scoring.
-# Option 1: 10 ppm tolerance, no isotopologues, count-based scoring.
-# Option 2: 10 ppm tolerance, isotopologues for C/Cl/Br/S/Si, count-based.
-# Option 3: 10 ppm tolerance, isotopologues, TIC-weighted scoring
-#           (TIC weight = mz × intensity, matches Kwiecien's published
-#           formula exactly).
+# calculate_rhrmf_variant(...) below is the parametric RHRMF used by
+# the production matching engine. With its default-ish "Option 3"
+# call site parameters (tolerance_ppm=10, include_isotopologues=True,
+# score_mode='tic') it follows Kwiecien (Anal. Chem. 87, 8328) closely:
+#   * 10 ppm mass tolerance per peak (was 0.015 Da fixed in v3.0.19)
+#   * on-the-fly heavy-isotope variant matching for C/Cl/Br/S/Si
+#   * TIC-weighted scoring: sum(mz * intensity)_annotated /
+#                            sum(mz * intensity)_observed
 #
-# All options preserve the REVERSE direction (filter to peaks whose
-# integer m/z is present in the library spectrum), since K2 implements
-# RHRMF specifically rather than forward HRMF.
+# The original calculate_rhrmf() function above (fixed-Da tolerance,
+# no isotopologues, count-based score) is kept for the diagnostic
+# rhrmf_opt0 column — when K2_DIAG_MATCHING_CSV is set, the matching
+# engine still computes that legacy variant side-by-side so the user
+# can audit the v3.0.20 transition against historical baselines. It
+# is otherwise unused.
 #
-# Remove this block (and the corresponding K2_DIAG_VARIANT block in
-# matching_engine.py) once the RHRMF-variant comparison investigation
-# completes.
+# The parametric form admits four named option settings used during
+# the May 2026 review; they remain available for diagnostic re-runs:
+#   Option 0 = legacy (use calculate_rhrmf, not this function)
+#   Option 1 = tolerance_ppm=10, include_isotopologues=False, count
+#   Option 2 = tolerance_ppm=10, include_isotopologues=True,  count
+#   Option 3 = tolerance_ppm=10, include_isotopologues=True,  tic
+#              ← production call-site configuration
+#
+# Reverse direction is preserved across all configurations: peaks
+# whose integer m/z is not in the library spectrum are skipped.
 # ========================================================================
 
 # Heavy-isotope mass deltas (heavy_mass - light_mass), AME 2020 values.
@@ -291,5 +300,5 @@ def calculate_rhrmf_variant(feat_spectrum, lib_compound, explainer=None,
             f"calculate_rhrmf_variant: unknown score_mode {score_mode!r} "
             f"(expected 'count' or 'tic')")
 # ========================================================================
-# K2_DIAG_VARIANT: end of variant block
+# end of v3.0.20 RHRMF implementation
 # ========================================================================

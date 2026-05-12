@@ -2,6 +2,36 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.20] - 2026-05-12
+
+### Changed
+- **RHRMF production scoring now follows Kwiecien 2015 (Anal. Chem. 87, 8328) closely.** Switches from the K2-original implementation (0.015 Da fixed tolerance, no isotopologue handling, count-based scoring) to: **10 ppm mass tolerance**, **on-the-fly heavy-isotope substitution for 13C / 37Cl / 81Br / 34S / 30Si**, and **TIC-weighted scoring** (`∑(mz × intensity)_annotated / ∑(mz × intensity)_observed`). The reverse direction (filter to peaks present in library) is preserved, since the framework calls for RHRMF rather than forward HRMF (Koelmel 2022, Exposome 2(1) osac007). Threshold remains `> 75`. Applied identically in `MatchingEngine.run_matching()` and `SurrogateAnalyzer._match_single_compound()`.
+- **HR auto-pass logic unchanged.** Library entries the HR detector flags as high-resolution still bypass RHRMF and receive the `100.0` sentinel + automatic `final_pass=True`, exactly as in v3.0.19.
+
+### Why this change
+- A May 2026 review of K2's `rhrmf.py` against the Kwiecien 2015 HRF paper and the Koelmel 2022 framework paper found three material deviations: tolerance ~3–30× wider than spec, no isotopologue handling (significant for halogenated/sulfur-containing compounds), and count-based instead of TIC-weighted scoring. Each deviation made RHRMF more permissive than the literature method; the cumulative effect was a low-bar filter that admitted many marginal matches.
+- A side-by-side diagnostic run on a 97k-compound unified library (1,721 dot-passing candidates from the user's environmental air-sample dataset) compared four scoring options:
+  - Option 0 (legacy K2): 357 candidates > 75 — wide-tolerance baseline.
+  - Option 1 (just tighten tolerance to 10 ppm): 1 candidate > 75 — too strict alone.
+  - Option 2 (10 ppm + isotopologues, count-based): 98 candidates > 75.
+  - Option 3 (10 ppm + isotopologues + TIC-weighted): 283 candidates > 75 — **adopted as production**.
+- Comparing the per-match CSV outputs from the same input under Option 0 (basecase) and Option 3:
+  - 142 matches are kept; 248 dropped; 178 new.
+  - Median LR RHRMF rises from 83.8 → 94.7. The 95–100 high-confidence bin nearly doubles (73 → 134); the marginal 76–80 bin shrinks (83 → 32).
+  - Dropped matches are dominated by compounds whose Option 3 score is 0–25 (likely Option 0 false positives admitted by its loose tolerance — small ketones like 2-heptanone variants, phenylethyl alcohol, etc.).
+  - Added matches include major environmental PAH targets (Pyrene ×16, Fluoranthene ×4, Fluorene at rev_dot 953) that Option 0 missed.
+
+### Known limitations
+- A handful of borderline matches (phenanthrene, anthracene, o-xylene at feat_id 68/756 in the validation set) score 70–74 under the new RHRMF and fall just below the >75 threshold. These are PAH compounds for which higher-confidence supporting evidence (e.g., RI match within stricter bounds, molecular ion confirmation) may be appropriate when reviewing borderline annotations.
+- A subset of Biphenyl features (24 library entries across feat_ids 538/542/543 in the validation set) scored 0 under the new RHRMF despite excellent dot-product matches. The synthetic test predicts these should score ~100 at full HR feature m/z precision; the empirical 0s remain unexplained and may indicate a precision-mismatch on those specific deconvolved features. Not addressed in this release.
+
+### Backward compatibility
+- The legacy `calculate_rhrmf()` function in `scripts/src/rhrmf.py` is preserved (unchanged signature and behavior) so the diagnostic `rhrmf_opt0` column in `K2_DIAG_MATCHING_CSV` traces continues to expose the v3.0.19 baseline for auditing.
+- The four "Option" diagnostic configurations on `calculate_rhrmf_variant(...)` remain available for any future re-runs of the comparison (set `K2_DIAG_MATCHING_CSV` and read the resulting CSV's `rhrmf_opt0`/`opt1`/`opt2`/`opt3` columns).
+- Re-run prior analyses if RHRMF score continuity matters for publication or reporting.
+
+---
+
 ## [3.0.19] - 2026-05-11
 
 ### Changed

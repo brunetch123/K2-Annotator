@@ -108,31 +108,188 @@ def calculate_rhrmf(feat_spectrum, lib_compound, explainer=None):
     Calculates RHRMF Score (0-100).
     """
     if not lib_compound.formula:
-        return 0.0 
-    
+        return 0.0
+
     if explainer is None:
         explainer = FormulaExplainer()
-        
+
     parent_counts = explainer.parse_formula(lib_compound.formula)
     if not parent_counts:
-        return 0.0 
-        
+        return 0.0
+
     lib_bins = set(int(round(mz)) for mz, _ in lib_compound.spectrum)
-    
+
     matched_peaks = 0
     explained_peaks = 0
-    
+
     for mz_exp, int_exp in feat_spectrum:
         mz_unit = int(round(mz_exp))
-        
+
         if mz_unit in lib_bins:
             matched_peaks += 1
             # We use a tolerance of 0.015 Da for High Res matching
             if explainer.explain_peak(mz_exp, parent_counts, tolerance=0.015):
                 explained_peaks += 1
-                
+
     if matched_peaks == 0:
         return 0.0
-        
+
     score = (explained_peaks / matched_peaks) * 100
     return score
+
+
+# ========================================================================
+# K2_DIAG_VARIANT: side-by-side diagnostic implementations of RHRMF
+# corresponding to Options 1/2/3 from the May 2026 review against the
+# Kwiecien 2015 HRF and Koelmel 2022 RHRMF specifications.
+#
+# Option 0 (production above): fixed 0.015 Da tolerance, no isotopologues,
+#                              count-based scoring.
+# Option 1: 10 ppm tolerance, no isotopologues, count-based scoring.
+# Option 2: 10 ppm tolerance, isotopologues for C/Cl/Br/S/Si, count-based.
+# Option 3: 10 ppm tolerance, isotopologues, TIC-weighted scoring
+#           (TIC weight = mz × intensity, matches Kwiecien's published
+#           formula exactly).
+#
+# All options preserve the REVERSE direction (filter to peaks whose
+# integer m/z is present in the library spectrum), since K2 implements
+# RHRMF specifically rather than forward HRMF.
+#
+# Remove this block (and the corresponding K2_DIAG_VARIANT block in
+# matching_engine.py) once the RHRMF-variant comparison investigation
+# completes.
+# ========================================================================
+
+# Heavy-isotope mass deltas (heavy_mass - light_mass), AME 2020 values.
+# Used to test whether a peak that fails monoisotopic matching could be
+# explained as a +k heavy-isotope variant. We restrict to atoms whose
+# heavy isotope has significant natural abundance and whose presence in
+# the parent formula is plausible: C (13C, ubiquitous), Cl (37Cl,
+# halogens), Br (81Br, halogens), S (34S, sulfurs), Si (30Si, silicons).
+HEAVY_ISOTOPE_DELTAS = {
+    'C':  1.00336,   # 13C - 12C
+    'Cl': 1.99705,   # 37Cl - 35Cl
+    'Br': 1.99795,   # 81Br - 79Br
+    'S':  1.99580,   # 34S - 32S
+    'Si': 1.99684,   # 30Si - 28Si
+}
+
+
+def _peak_explained_variant(mz_exp, parent_counts, explainer,
+                            tolerance_ppm, include_isotopologues):
+    """K2_DIAG_VARIANT: per-peak explainability check used by Options 1/2/3.
+
+    Computes per-peak Da tolerance from `tolerance_ppm`, then asks the
+    existing FormulaExplainer.explain_peak whether the mass is reachable
+    by some sub-combination of `parent_counts`. If that fails AND
+    `include_isotopologues` is True, retry with residual = mz_exp -
+    k * Δ_heavy for k ∈ [1, parent_count[element]] over each element in
+    HEAVY_ISOTOPE_DELTAS. (This approximates Kwiecien's on-the-fly
+    isotopologue handling: we don't enforce that the matched subformula
+    actually contains the heavy atom, so a few false positives are
+    possible when the residual mass happens to monoisotopically match a
+    subformula that doesn't include that element. With tight ppm
+    tolerance these collisions are rare in practice.)
+    """
+    abs_tol = max(mz_exp * tolerance_ppm / 1e6, 1e-6)
+    if explainer.explain_peak(mz_exp, parent_counts, tolerance=abs_tol):
+        return True
+
+    if not include_isotopologues:
+        return False
+
+    for element, delta in HEAVY_ISOTOPE_DELTAS.items():
+        max_k = parent_counts.get(element, 0)
+        if max_k <= 0:
+            continue
+        for k in range(1, int(max_k) + 1):
+            residual = mz_exp - k * delta
+            if residual <= 0:
+                break
+            abs_tol_resid = max(residual * tolerance_ppm / 1e6, 1e-6)
+            if explainer.explain_peak(residual, parent_counts,
+                                       tolerance=abs_tol_resid):
+                return True
+    return False
+
+
+def calculate_rhrmf_variant(feat_spectrum, lib_compound, explainer=None,
+                            tolerance_ppm=10,
+                            include_isotopologues=False,
+                            score_mode='count'):
+    """K2_DIAG_VARIANT: parametric RHRMF for Options 1/2/3 comparison.
+
+    Parameters mirror the May 2026 review's option list:
+      - tolerance_ppm: per-peak mass tolerance in parts per million.
+        Kwiecien specifies 10 ppm. K2 production uses 0.015 Da fixed,
+        which is 30–200 ppm at typical GC-MS m/z.
+      - include_isotopologues: when True, retry failed monoisotopic
+        matches with k heavy-isotope substitutions (13C / 37Cl / 81Br /
+        34S / 30Si). Kwiecien's algorithm does this on-the-fly.
+      - score_mode: 'count' (explained_peaks / matched_peaks) matches
+        Koelmel's prose description; 'tic' (∑(mz*int)_annotated /
+        ∑(mz*int)_observed) matches Kwiecien's published formula
+        exactly. Both expressed as 0-100.
+
+    Reverse direction is preserved: peaks whose integer m/z is not in
+    the library spectrum are skipped entirely (same as
+    calculate_rhrmf).
+
+    Returns float in [0.0, 100.0]. Returns 0.0 if no library formula,
+    no parseable parent, or no peaks in the reverse-filtered set.
+    """
+    if not lib_compound.formula:
+        return 0.0
+    if explainer is None:
+        explainer = FormulaExplainer()
+    parent_counts = explainer.parse_formula(lib_compound.formula)
+    if not parent_counts:
+        return 0.0
+
+    lib_bins = set(int(round(mz)) for mz, _ in lib_compound.spectrum)
+
+    if score_mode == 'count':
+        matched = 0
+        explained = 0
+        for mz_exp, _int_exp in feat_spectrum:
+            mz_unit = int(round(mz_exp))
+            if mz_unit not in lib_bins:
+                continue
+            matched += 1
+            if _peak_explained_variant(mz_exp, parent_counts, explainer,
+                                       tolerance_ppm,
+                                       include_isotopologues):
+                explained += 1
+        if matched == 0:
+            return 0.0
+        return (explained / matched) * 100.0
+
+    elif score_mode == 'tic':
+        observed_tic = 0.0
+        annotated_tic = 0.0
+        for mz_exp, int_exp in feat_spectrum:
+            mz_unit = int(round(mz_exp))
+            if mz_unit not in lib_bins:
+                continue
+            try:
+                weight = float(mz_exp) * float(int_exp)
+            except (TypeError, ValueError):
+                continue
+            if weight <= 0:
+                continue
+            observed_tic += weight
+            if _peak_explained_variant(mz_exp, parent_counts, explainer,
+                                       tolerance_ppm,
+                                       include_isotopologues):
+                annotated_tic += weight
+        if observed_tic == 0:
+            return 0.0
+        return (annotated_tic / observed_tic) * 100.0
+
+    else:
+        raise ValueError(
+            f"calculate_rhrmf_variant: unknown score_mode {score_mode!r} "
+            f"(expected 'count' or 'tic')")
+# ========================================================================
+# K2_DIAG_VARIANT: end of variant block
+# ========================================================================

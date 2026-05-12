@@ -1,7 +1,12 @@
 from src.universal_parser import UniversalParser
 from src.library_parser import LibraryParser, MAX_LIB_PEAKS_DEFAULT
 from src.spectral_math import calculate_scores
-from src.rhrmf import calculate_rhrmf, is_library_high_res, FormulaExplainer
+from src.rhrmf import (calculate_rhrmf, is_library_high_res,
+                       FormulaExplainer)
+# K2_DIAG_VARIANT: side-by-side RHRMF variant scoring for Options 1/2/3.
+# Only imported (and called) when the diagnostic env var is set; production
+# matching uses calculate_rhrmf exclusively.
+from src.rhrmf import calculate_rhrmf_variant
 from src.is_normalizer import InternalStandardNormalizer
 import bisect
 import time
@@ -242,6 +247,36 @@ class MatchingEngine:
                     if cand.final_pass:
                         candidates.append(cand)
 
+                    # K2_DIAG_VARIANT: compute all four RHRMF variants
+                    # side-by-side for the comparison investigation. Only
+                    # done when the diagnostic CSV is enabled, since each
+                    # candidate now costs 4× the RHRMF compute. Bounded
+                    # by the dot-product gate so total compute is small.
+                    opt0 = opt1 = opt2 = opt3 = None
+                    if self._diag_path is not None:
+                        # Option 0: explicit production-equivalent score,
+                        # computed even for HR (production uses 100.0
+                        # sentinel for HR; here we always run the real
+                        # algorithm so the diagnostic columns are
+                        # comparable across is_hr=True and is_hr=False).
+                        opt0 = calculate_rhrmf(
+                            feat.spectrum, lib_comp, self.explainer)
+                        opt1 = calculate_rhrmf_variant(
+                            feat.spectrum, lib_comp, self.explainer,
+                            tolerance_ppm=10,
+                            include_isotopologues=False,
+                            score_mode='count')
+                        opt2 = calculate_rhrmf_variant(
+                            feat.spectrum, lib_comp, self.explainer,
+                            tolerance_ppm=10,
+                            include_isotopologues=True,
+                            score_mode='count')
+                        opt3 = calculate_rhrmf_variant(
+                            feat.spectrum, lib_comp, self.explainer,
+                            tolerance_ppm=10,
+                            include_isotopologues=True,
+                            score_mode='tic')
+
                     # K2_DIAG: record candidate after dot+RHRMF evaluation
                     self._diag_capture(
                         feat=feat, lib_comp=lib_comp,
@@ -253,6 +288,11 @@ class MatchingEngine:
                         rhrmf_score=cand.rhrmf_score,
                         final_pass=cand.final_pass,
                         gate_failed=(None if cand.final_pass else 'rhrmf'),
+                        # K2_DIAG_VARIANT: side-by-side scores
+                        rhrmf_opt0=opt0,
+                        rhrmf_opt1=opt1,
+                        rhrmf_opt2=opt2,
+                        rhrmf_opt3=opt3,
                     )
                 else:
                     # K2_DIAG: record candidate as failing dot-product gate
@@ -298,6 +338,15 @@ class MatchingEngine:
         'dot', 'rev_dot', 'passed_dot_thresholds',
         'rhrmf_score', 'final_pass',
         'gate_failed',
+        # K2_DIAG_VARIANT: side-by-side scoring for RHRMF Options 1/2/3.
+        # rhrmf_opt0 = explicit Option 0 score (same algorithm as the
+        # production rhrmf_score column, but computed for HR candidates
+        # too — production uses the 100.0 sentinel for HR while we
+        # always run the real algorithm here for comparison).
+        # rhrmf_opt1 = 10 ppm tolerance, no isotopologues, count-based.
+        # rhrmf_opt2 = 10 ppm + isotopologues for C/Cl/Br/S/Si, count-based.
+        # rhrmf_opt3 = 10 ppm + isotopologues + TIC-weighted (Kwiecien).
+        'rhrmf_opt0', 'rhrmf_opt1', 'rhrmf_opt2', 'rhrmf_opt3',
     ]
 
     def _diag_capture(self, feat, lib_comp, **fields):

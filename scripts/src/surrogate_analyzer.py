@@ -15,7 +15,11 @@ from dataclasses import dataclass, field
 
 from src.library_parser import LibraryParser, LibraryCompound
 from src.spectral_math import calculate_scores
-from src.rhrmf import calculate_rhrmf, is_library_high_res, FormulaExplainer
+from src.rhrmf import (calculate_rhrmf, is_library_high_res,
+                       FormulaExplainer)
+# TRIAL branch (claude/rhrmf-opt3-trial): import the parametric variant
+# so surrogate analysis uses the same RHRMF as suspect screening.
+from src.rhrmf import calculate_rhrmf_variant
 
 
 @dataclass
@@ -214,7 +218,16 @@ class SurrogateAnalyzer:
                 rhrmf_score = 100.0  # High-res passes automatically
                 passed_rhrmf = True
             else:
-                rhrmf_score = calculate_rhrmf(feat.spectrum, compound, self.explainer)
+                # TRIAL branch (claude/rhrmf-opt3-trial): match suspect-
+                # screening RHRMF — 10 ppm + isotopologues + TIC-weighted
+                # (see matching_engine.py for full rationale). To revert,
+                # restore the calculate_rhrmf(...) call above or
+                # `git checkout claude/diag-hr-matching`.
+                rhrmf_score = calculate_rhrmf_variant(
+                    feat.spectrum, compound, self.explainer,
+                    tolerance_ppm=10,
+                    include_isotopologues=True,
+                    score_mode='tic')
                 passed_rhrmf = rhrmf_score > self.RHRMF_MIN
             
             if not passed_rhrmf:

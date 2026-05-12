@@ -235,7 +235,24 @@ class MatchingEngine:
                         cand.final_pass = True
                     else:
                         # Low Res Library Match: Must pass RHRMF > 75
-                        score = calculate_rhrmf(feat.spectrum, lib_comp, self.explainer)
+                        # TRIAL branch (claude/rhrmf-opt3-trial): production
+                        # RHRMF call now uses Option 3 from the May 2026
+                        # review — 10 ppm tolerance, isotopologues for
+                        # C/Cl/Br/S/Si, Kwiecien's TIC-weighted scoring
+                        # (Anal. Chem. 2015, 87, 8328). This is the
+                        # closest of the three rigorous variants to the
+                        # literature definition; the production code on
+                        # claude/diag-hr-matching used calculate_rhrmf()
+                        # (0.015 Da fixed tolerance, no isotopologues,
+                        # count-based). Threshold stays at 75 for an
+                        # apples-to-apples pass-count comparison; you
+                        # may want to retune it after looking at the
+                        # output distribution.
+                        score = calculate_rhrmf_variant(
+                            feat.spectrum, lib_comp, self.explainer,
+                            tolerance_ppm=10,
+                            include_isotopologues=True,
+                            score_mode='tic')
                         cand.rhrmf_score = score
 
                         if score > 75:

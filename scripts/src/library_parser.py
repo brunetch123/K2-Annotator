@@ -3,6 +3,50 @@ import sys
 import json
 import os
 
+
+# v3.0.19: Trim library spectra to this many peaks (by intensity) at
+# load time. NIST/Wiley LR entries average ~70 peaks; HR Orbitrap-
+# derived entries average ~125+ with many low-intensity ions that
+# carry no matching value but inflate the dot-product denominator.
+# The diagnostic on the May 2026 unified library showed HR entries
+# losing ~4x reverse-dot vs the LR version of the same compound
+# (e.g. 9-fluorenone: LR 27 peaks → rev_dot 735 (PASS); HR 79 peaks
+# → rev_dot 167 (FAIL)) purely because of this asymmetry.
+# 20 was chosen to roughly match the feature-peak-count median
+# coming out of MZmine deconvolution; tune via --max-lib-peaks.
+MAX_LIB_PEAKS_DEFAULT = 20
+
+
+def _trim_spectrum(peaks, max_peaks):
+    """Return the top `max_peaks` peaks by intensity, restored to
+    m/z-ascending order. No-op when `max_peaks` is None, ≤0, or
+    when the spectrum already has ≤ max_peaks peaks.
+
+    Trimming happens once per library compound at load time, so the
+    cost is paid only on library import (not on every feature
+    comparison) and downstream consumers (matching_engine,
+    spectral_math, rhrmf) see the already-trimmed spectrum.
+    """
+    if max_peaks is None or max_peaks <= 0:
+        return peaks
+    if len(peaks) <= max_peaks:
+        return peaks
+    # Pick top-N by intensity. Defensive cast in case peaks are
+    # lists vs tuples or carry strange types (library JSON is
+    # user-supplied and we've seen the occasional surprise).
+    try:
+        top = sorted(peaks, key=lambda p: -float(p[1]))[:max_peaks]
+    except (TypeError, ValueError, IndexError):
+        return peaks
+    # Re-sort to m/z asc so PDF mirror plots, CSV dumps, etc. still
+    # see a conventionally-ordered spectrum.
+    try:
+        top.sort(key=lambda p: float(p[0]))
+    except (TypeError, ValueError, IndexError):
+        pass
+    return top
+
+
 class LibraryCompound:
     """
     Represents a single compound from the Reference Library.
@@ -19,8 +63,9 @@ class LibraryCompound:
         return f"<LibComp '{self.name}' RI={self.ri:.1f} Peaks={len(self.spectrum)} LibIdx={self.library_index}>"
 
 class LibraryParser:
-    def __init__(self, library_path):
+    def __init__(self, library_path, max_peaks=MAX_LIB_PEAKS_DEFAULT):
         self.library_path = library_path
+        self.max_peaks = max_peaks  # v3.0.19: per-compound spectrum trim
         self.compounds = []
 
     def load_library(self):
@@ -110,6 +155,10 @@ class LibraryParser:
                 except (json.JSONDecodeError, IndexError):
                     skipped_count += 1
                     continue
+
+                # v3.0.19: trim to top-N peaks by intensity before
+                # the compound is stored. See _trim_spectrum docstring.
+                spectrum = _trim_spectrum(spectrum, self.max_peaks)
 
                 # 3. Capture Metadata (Everything in the row)
                 # We store it as a dictionary {ColumnName: Value}
@@ -269,6 +318,9 @@ class LibraryParser:
 
         # Convert metadata keys to lowercase for consistency
         metadata_clean = {k.lower(): v for k, v in metadata.items()}
+
+        # v3.0.19: trim to top-N peaks by intensity before stash.
+        peaks = _trim_spectrum(peaks, self.max_peaks)
 
         return LibraryCompound(name, formula, ri, peaks, metadata_clean)
 

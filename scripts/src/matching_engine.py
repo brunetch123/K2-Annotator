@@ -1,5 +1,5 @@
 from src.universal_parser import UniversalParser
-from src.library_parser import LibraryParser
+from src.library_parser import LibraryParser, MAX_LIB_PEAKS_DEFAULT
 from src.spectral_math import calculate_scores
 from src.rhrmf import calculate_rhrmf, is_library_high_res, FormulaExplainer
 from src.is_normalizer import InternalStandardNormalizer
@@ -26,7 +26,7 @@ class MatchCandidate:
 class MatchingEngine:
     def __init__(self, data_dir, quant_file, msp_file, library_file, ri_cal_file=None, blank_identifier="fieldblank",
                  sample_types=None, is_config=None, reference_samples=None, bff_mode='standard',
-                 bff_c_factor=5.0):
+                 bff_c_factor=5.0, max_lib_peaks=MAX_LIB_PEAKS_DEFAULT):
         self.data_dir = data_dir
         self.quant_file = quant_file  # Changed from area_file to quant_file (more generic)
         self.msp_file = msp_file
@@ -55,6 +55,18 @@ class MatchingEngine:
             raise ValueError(f"bff_c_factor must be a number, got {bff_c_factor!r}")
         if self.bff_c_factor <= 0:
             raise ValueError(f"bff_c_factor must be > 0, got {self.bff_c_factor}")
+
+        # v3.0.19: top-N peak trim applied at library load.
+        try:
+            self.max_lib_peaks = int(max_lib_peaks) if max_lib_peaks else 0
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"max_lib_peaks must be an integer (or 0/None to disable "
+                f"trimming), got {max_lib_peaks!r}")
+        if self.max_lib_peaks < 0:
+            raise ValueError(
+                f"max_lib_peaks must be >= 0 (0 disables trimming), "
+                f"got {self.max_lib_peaks}")
 
         self.parser = None  # Changed from msdial_parser to parser (universal)
         self.library_parser = None
@@ -142,8 +154,10 @@ class MatchingEngine:
                             c_factor=self.bff_c_factor, mode=self.bff_mode)
 
         # 6. Load Library
-        print("Loading Library...")
-        self.library_parser = LibraryParser(self.library_file)
+        print(f"Loading Library (top-{self.max_lib_peaks or 'all'} peaks "
+              f"per compound)...")
+        self.library_parser = LibraryParser(self.library_file,
+                                            max_peaks=self.max_lib_peaks)
         self.library_parser.load_library()
         
     def run_matching(self):

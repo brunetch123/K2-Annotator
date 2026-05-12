@@ -737,7 +737,7 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
 def run_library_matching(mzmine_folder, output_folder, project_name, library_file,
                          blank_id, ri_cal=None, api_key=None, grouping=None, is_config=None,
                          surrogate_library=None, surrogate_config=None, reference_samples=None,
-                         bff_mode='standard', bff_c_factor=5.0):
+                         bff_mode='standard', bff_c_factor=5.0, max_lib_peaks=20):
     """Run library matching using cli.py."""
 
     # Find MZmine output files
@@ -799,6 +799,7 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
         "--blank-id", blank_id,
         "--bff-mode", bff_mode,
         "--bff-c-factor", str(bff_c_factor),
+        "--max-lib-peaks", str(max_lib_peaks),  # v3.0.19
         "--output", str(output_folder)
     ]
     
@@ -1015,7 +1016,8 @@ def run_pipeline(args):
             surrogate_config=args.surrogate_config if hasattr(args, 'surrogate_config') else None,
             reference_samples=args.reference_samples if hasattr(args, 'reference_samples') else None,
             bff_mode=getattr(args, 'bff_mode', 'standard'),
-            bff_c_factor=getattr(args, 'bff_c_factor', 5.0)
+            bff_c_factor=getattr(args, 'bff_c_factor', 5.0),
+            max_lib_peaks=getattr(args, 'max_lib_peaks', 20),  # v3.0.19
         )
         if result is None:
             return 1
@@ -1190,6 +1192,20 @@ Examples:
         type=str,
         default=None,
         help='Comma-separated list of reference sample names to exclude from suspect screening'
+    )
+
+    # v3.0.19: peak-trim libraries to top-N peaks by intensity to
+    # equalise HR vs LR peak-count asymmetry in dot/rev-dot scoring.
+    # Forwarded verbatim to cli.py.
+    parser.add_argument(
+        '--max-lib-peaks',
+        type=int,
+        default=20,
+        metavar='N',
+        help='Trim every library compound to the top N peaks by '
+             'intensity at load (default: 20). Equalises HR vs LR '
+             'peak counts so reverse-dot is not biased against '
+             'peak-dense HR entries. Pass 0 to disable trimming.'
     )
 
     parser.add_argument(

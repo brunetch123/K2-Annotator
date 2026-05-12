@@ -2,6 +2,22 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
+## [3.0.19] - 2026-05-11
+
+### Changed
+- **Library spectra are trimmed to the top-N peaks by intensity at load (default N=20).** A May 2026 diagnostic on a ~97k-entry unified library showed HR Orbitrap-derived entries scoring ~4x lower on reverse-dot than the LR version of the same compound — e.g. 9-fluorenone matched a feature at rev_dot=735 against its 27-peak NIST entry but rev_dot=167 against the 79-peak HR entry, *with similar forward-dot scores*. The cause is asymmetric peak counts: MZmine-deconvoluted feature spectra carry ~16 peaks median, but HR library entries carry ~125+ low-intensity peaks that inflate the reverse-dot denominator (`lib_norm_sq`) without contributing to the numerator. Trimming to top-N intensities at load equalises both sides and removes that bias. NIST MS Search applies a similar preprocessing step internally. Configurable via `--max-lib-peaks N` on `cli.py` and `gcms_pipeline.py`; pass `0` to disable.
+- **`is_library_high_res()` now scans the full (post-trim) spectrum** instead of only the first 5 peaks. The May 2026 library audit found ~1,100 compounds where decimal m/z values exist later in the spectrum but the leading peaks happen to sit near-integer (molecular ion, common immonium ions, hydrocarbon fragments at <0.05 Da fractional). The old first-5-only rule classified those as LR, sending them through `calculate_rhrmf()` (which uses integer-binned matching anyway) instead of the HR auto-pass path. The 0.05 Da fractional threshold is unchanged; only the scan range expanded. With libraries now trimmed to ≤20 peaks at load, the full-spectrum scan is cheap.
+
+### Why this combination
+- The two changes are complementary: (a) trimming brings HR libraries' peak counts into parity with LR libraries and with experimental spectra, restoring fair dot-product comparison; (b) the expanded HR detector correctly routes the resulting trimmed spectra to the HR vs LR matching path. Doing only (a) would leave most HR entries classified LR (where the trim moves the integer-m/z M+ to the front and the few decimal peaks get clipped from the first-5 view); doing only (b) would route more entries to HR auto-pass but leave them failing the dot-product gate.
+
+### Backward compatibility
+- Default `max_lib_peaks=20` changes scoring numerically for any compound with more than 20 library peaks. LR libraries with sparse spectra (≤20 peaks, most of NIST/Wiley low-mass) are unaffected. Larger libraries see a deterministic rescore; the direction is usually higher dot-products (smaller `lib_norm_sq`) but not always. Re-run prior analyses if scoring continuity matters.
+- Pass `--max-lib-peaks 0` to fully restore pre-v3.0.19 behavior (no trimming).
+- GUI doesn't currently expose this flag, so all GUI-launched runs use the default 20. To override from the GUI flow, edit the saved `.K2config` preset or set the flag in `k2_screens.py`'s command builder.
+
+---
+
 ## [3.0.18] - 2026-05-11
 
 ### Fixed

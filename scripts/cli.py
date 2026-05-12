@@ -158,6 +158,23 @@ Examples:
         help='Comma-separated list of reference sample names to exclude from suspect screening'
     )
 
+    # v3.0.19: trim library spectra to top-N peaks by intensity at
+    # load time. Equalises peak-count between LR and HR library
+    # entries so the reverse-dot denominator doesn't unfairly punish
+    # the latter. 20 was chosen to roughly match the MZmine-deconv
+    # feature peak-count median; 0 disables trimming.
+    parser.add_argument(
+        '--max-lib-peaks',
+        type=int,
+        default=20,
+        metavar='N',
+        help='Trim every library compound to the top N peaks by '
+             'intensity at load (default: 20). Equalises HR vs LR '
+             'peak counts so reverse-dot is not biased against '
+             'peak-dense HR entries. Pass 0 to disable trimming and '
+             'keep full library spectra.'
+    )
+
     args = parser.parse_args()
 
     # Validate files exist
@@ -253,7 +270,8 @@ Examples:
             is_config=is_config,
             reference_samples=reference_samples,  # v3.0.0
             bff_mode=args.bff_mode,  # v3.0.4
-            bff_c_factor=args.bff_c_factor  # v3.0.5
+            bff_c_factor=args.bff_c_factor,  # v3.0.5
+            max_lib_peaks=args.max_lib_peaks,  # v3.0.19
         )
 
         # Load data

@@ -11,19 +11,31 @@ ATOM_MASSES = {
 def is_library_high_res(spectrum):
     """
     Checks if the library spectrum is High Res.
-    Criteria: Check if masses have significant decimal precision.
+    Criteria: any peak's m/z has fractional component > 0.05 Da.
+
+    v3.0.19: scans the full (post-trim) spectrum instead of only the
+    first 5 peaks. The May 2026 library audit found ~1,100 entries
+    where decimal m/z values exist later in the spectrum but the
+    leading peaks happen to be near-integer (M+, M-1, common
+    immonium ions, etc.). The old first-5-only rule misclassified
+    those as LR. Library spectra are now trimmed to top-N peaks by
+    intensity at load (library_parser.MAX_LIB_PEAKS_DEFAULT, default
+    20), so "scan all peaks" is cheap and consistent.
+
+    The 0.05 Da threshold is unchanged; it tolerates hydrocarbon-
+    only m/z values that sit close to integer (e.g., C6H6+ =
+    78.0469, frac=0.0469) being classified LR. If your HR library
+    contains many such entries you may want to tighten this.
     """
     if not spectrum:
         return False
-    
-    # Check first 5 peaks
-    decimals = 0
-    for mz, _ in spectrum[:5]:
-        frac = abs(mz - round(mz))
-        if frac > 0.05: # Threshold for "non-integer-like"
-            decimals += 1
-            
-    return decimals >= (len(spectrum[:5]) / 2)
+    for mz, _ in spectrum:
+        try:
+            if abs(float(mz) - round(float(mz))) > 0.05:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 class FormulaExplainer:
     def __init__(self):

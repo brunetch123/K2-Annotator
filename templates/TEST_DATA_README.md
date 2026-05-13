@@ -55,26 +55,44 @@ BFF threshold = 5.0 × (mean_blank + 3 × std_blank)
 
 ## Matching Criteria
 
-For a match to be found:
+For a match to be found (current K2 production behavior):
+
 1. Feature must pass BFF filter
-2. RI must be within ±50 units of library compound
-3. RI % error must be < 1.5%
-4. Forward dot product > 500
-5. Reverse dot product > 600
-6. **High-res libraries**: Automatically pass (bypass RHRMF)
-7. **Low-res libraries**: RHRMF score > 75
+2. RI must be within ±50 units of library compound **AND** RI % error < 1.5%
+3. Forward dot product > 500 **AND** reverse dot product > 600 (NIST-style
+   weighted cosine, computed on the library spectrum trimmed to its top-20
+   most intense peaks at load)
+4. **For library entries classified as truly high-resolution** (≥2 sub-Da
+   m/z peaks with ≥1 in the top 3 by intensity, excluding z=2 half-integer
+   artifacts and 1-decimal-rounded m/z values): re-score with an HR-aware
+   dot product using 10 ppm peak-pair matching, and require its
+   forward/reverse scores to also clear >500 / >600. RHRMF is skipped on
+   this path (the HR-aware dot product IS the exact-mass discrimination).
+5. **For all other library entries**: RHRMF score > 75. K2's RHRMF
+   follows Kwiecien 2015: 10 ppm tolerance, on-the-fly isotopologue
+   substitution for 13C / 37Cl / 81Br / 34S / 30Si, TIC-weighted scoring
+   (∑(mz × intensity)_annotated / ∑(mz × intensity)_observed).
 
 ## High-Resolution vs Low-Resolution
 
-**High-Resolution Library Compounds** (bypass RHRMF):
-- **n-Decane**: Has decimal precision in m/z values (>0.05), detected as high-res
-- **2,4-Dimethylpentane**: Has decimal precision in m/z values, detected as high-res
+The K2 HR detector classifies a library entry as truly high-resolution
+only when its high-intensity peaks carry actual exact-mass information.
+Specifically, an entry is HR if it has at least 2 "real-HR" peaks AND
+at least one such peak is in the top 3 by intensity. A "real-HR" peak
+has fractional m/z > 0.05, is NOT half-integer (excludes z=2
+doubly-charged artifacts like 76.5, 160.5), and is NOT
+1-decimal-rounded (excludes entries stored as 93.1, 91.1, etc.).
 
-**Low-Resolution Library Compound** (requires RHRMF > 75):
-- **Benzene**: Integer m/z values, detected as low-res
-- Feature spectrum uses exact masses that can be explained by C6H6 formula:
-  - 78.0469 (C6H6+), 77.0391 (C6H5+), 76.0313 (C6H4+), 52.0313 (C4H4+), etc.
-  - All major peaks are explainable from C6H6, so RHRMF should be > 75
+**Note about the test data:** The library spectra in this template
+were designed under the pre-v3.0.21 HR auto-pass model. n-Decane and
+2,4-Dimethylpentane peaks here are stored at integer m/z, so they
+will be classified as LR by the current detector and routed through
+the RHRMF path. That's the expected behavior — the validation harness
+still confirms the matching pipeline runs end-to-end, but the
+"high-resolution" categorization in earlier versions of this document
+no longer applies. For a true HR test you would need to supply a
+library entry with multiple sub-Da-precision peaks (e.g. exact-mass
+fragments from an Orbitrap-derived library).
 
 ## Expected Results
 

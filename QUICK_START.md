@@ -22,12 +22,13 @@ When K2 opens:
 3. **Browse** to select folders (use the example data if you want)
 
 4. **Important:** Set paths to external tools:
-   - MSConvert: `software\pwiz-bin\msconvert.exe` (if starting from .D)
-   - MZmine: `software\mzmine\mzmine_console.exe`
-   - User file: `users\default.mzuser`
-   - Batch file: `config\gc_ei_workflow.mzbatch`
-   - Library: `unified_library_20251013.csv`
-   - RI Cal: `MSDial_RICal.txt`
+   - MSConvert: e.g. `C:\Program Files\ProteoWizard\msconvert.exe`
+     (if starting from raw vendor data)
+   - MZmine: e.g. `C:\Program Files\mzmine\mzmine_console.exe`
+   - User file: `users\default.mzuser` (included)
+   - Batch file: `config\gc_ei_workflow.mzbatch` (included)
+   - Library: your own CSV or MSP file (see `templates/`)
+   - RI Cal: optional, your own tab-delimited alkane RT table
 
 5. Check **"Save as default"** boxes so you don't have to do this again
 
@@ -52,20 +53,21 @@ If you just want to test the GUI without running a full analysis:
 
 ### ✅ GUI Should:
 - Open without errors
-- Show K2 logo (if K2Icon.png exists)
-- Display all 8 screens cleanly
+- Show K2 logo (K2Icon.png / K2Logo.png are bundled)
+- Display all screens cleanly (Welcome, Entry Select, Project Setup,
+  Sample Classification, MSConvert, MZmine, Analysis Parameters,
+  Surrogate Config, Execution, Results)
 - Allow navigation back/forth
 - Save/load projects and presets
 - Execute pipeline when configured
 
 ### ❌ If Problems:
 ```bash
-# Ensure all dependencies are installed
-setup_env.bat
+# Reinstall Python dependencies
+pip install -r requirements.txt
 
 # Try running directly:
-cd scripts
-..\.venv\Scripts\python k2_gui.py
+python scripts\k2_gui.py
 
 # Check for errors in output
 ```
@@ -88,12 +90,17 @@ cd scripts
 
 ---
 
-## Example Data
+## Example / Test Data
 
-Use files in `examplerawdata/` folder:
-- 6 example .D files
-- Good for testing the full pipeline
-- Small enough to run quickly (~5-10 min)
+A tiny validation dataset is bundled in `templates/`:
+
+- `library_template.csv` / `library_template.msp` — example library entries
+- `test_quant.csv` / `test_spectra.msp` — example MZmine-format inputs
+- `TEST_DATA_README.md` — explanation of the test features and expected matching behavior
+
+This data is for sanity-checking the GUI flow and validating that the
+matching engine runs end-to-end. It is not a production library or
+sample set — use your own data for real analyses.
 
 ---
 
@@ -140,7 +147,7 @@ Use files in `examplerawdata/` folder:
 ## Need Help?
 
 - Check `K2_USER_GUIDE.md` for detailed instructions
-- Check `K2_IMPLEMENTATION_SUMMARY.md` for technical details
+- Check `CHANGELOG.md` for the current version's behavioral changes
 - Check console output for error messages
 - Verify all external tools are installed
 

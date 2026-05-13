@@ -12,7 +12,7 @@ K2 Annotator is an open-source pipeline for non-targeted GC-MS suspect screening
 
 - **Raw file conversion** via ProteoWizard MSConvert
 - **Feature detection and deconvolution** via MZmine
-- **Spectral library matching** with Retention Index and RHRMF validation
+- **Spectral library matching** with Retention Index, Kwiecien-style RHRMF (10 ppm + isotopologue substitution + TIC-weighted scoring), and HR-aware dot product for genuinely high-resolution library entries
 - **Hazard screening** via EPA CompTox APIs
 - **Surrogate standard recovery** calculation (v3.0.0+)
 
@@ -44,8 +44,8 @@ K2 Annotator is an open-source pipeline for non-targeted GC-MS suspect screening
    pip install -r requirements.txt
    ```
 3. Install external tools (required for full pipeline):
-   - [ProteoWizard MSConvert](https://proteowizard.sourceforge.io/) — for raw file conversion (.D → mzML)
-   - [MZmine 3](https://mzmine.github.io/) — for feature detection and deconvolution
+   - [ProteoWizard MSConvert](https://proteowizard.sourceforge.io/) — for raw file conversion (vendor raw → mzML)
+   - [MZmine](https://mzmine.github.io/) (3.x or 4.x) — for feature detection and deconvolution
 4. Provide a spectral library in CSV or MSP format (see **Library Formats** below)
 
 ### Running the GUI
@@ -72,7 +72,7 @@ K2 Annotator requires the following tools to be installed separately (they are n
 | Tool | Purpose | Download |
 |------|---------|----------|
 | **ProteoWizard MSConvert** | Convert raw instrument data to mzML (any vendor format MSConvert supports) | [proteowizard.sourceforge.io](https://proteowizard.sourceforge.io/) |
-| **MZmine 3** | Feature detection, deconvolution, quantification | [mzmine.github.io](https://mzmine.github.io/) |
+| **MZmine** (3.x or 4.x) | Feature detection, deconvolution, quantification | [mzmine.github.io](https://mzmine.github.io/) |
 
 Place these in a `software/` directory alongside this repository, or configure their paths in the K2 Annotator GUI settings.
 
@@ -136,13 +136,15 @@ K2-GCMS-Pipeline/
 │       ├── reporter.py            # Report generation
 │       ├── is_normalizer.py       # Internal standard normalization
 │       ├── ri_calibration.py      # Retention index calibration
-│       ├── rhrmf.py               # HR mass formula validation
+│       ├── rhrmf.py               # Reverse HR mass formula filter
 │       ├── structure_helper.py    # PubChem structure lookup
 │       ├── surrogate_analyzer.py  # Surrogate recovery analysis
 │       ├── surrogate_reporter.py  # Surrogate recovery reports
 │       ├── ctx_client.py          # EPA CompTox API client
 │       ├── epa_client.py          # Legacy EPA API client
-│       └── msdial_parser.py       # MS-DIAL format parser
+│       ├── summary_tables.py      # Feature/match summary CSV+PDF
+│       └── msdial_parser.py       # MS-DIAL format parser (legacy;
+│                                  # superseded by universal_parser)
 ├── config/                # MZmine workflow configurations
 ├── templates/             # Library format templates and test data
 ├── users/                 # MZmine user profiles

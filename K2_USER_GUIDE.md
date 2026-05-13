@@ -110,7 +110,9 @@ Download from: https://github.com/mzmine/mzmine/releases
 ### 3. Spectral Library (Required)
 
 **Format:** CSV or MSP
-**Example:** `unified_library_20251013.csv` (included)
+**Templates:** `templates/library_template.csv` and `templates/library_template.msp`
+
+K2 Annotator does not bundle a production spectral library — you must supply your own (e.g. an export of NIST/Wiley, MassBank, or an in-house library). See `templates/library_template.{csv,msp}` for the expected schema and `templates/TEST_DATA_README.md` for a tiny test library used by the validation harness.
 
 **CSV Format Requirements:**
 - Must have columns: `name`, `formula`, `ri`, `peaks_json`
@@ -187,7 +189,7 @@ This file contains three example compounds demonstrating all required and recomm
 ### 4. RI Calibration File (Optional)
 
 **Format:** Tab-delimited text file
-**Example:** `MSDial_RICal.txt` (included)
+**Example:** any RI calibration table exported from MS-DIAL or constructed manually
 
 **Format:**
 ```
@@ -469,7 +471,7 @@ K2 Annotator now also catches this case at startup and refuses to run with an ac
 3. **Antivirus real-time scanning.** Defender / corporate AV products see `mzmine.tmp` being written and grab a read handle for scanning; the JVM's mapped view then disappears or stalls. Exclude the scratch directory (or the whole `%TEMP%` tree) from real-time scanning. This is the single most common cause we see in the wild.
 
 **Other knobs:**
-- `--mzmine-memory {none,mass,all}` — forwarded to MZmine's `-memory` flag. Default `mass` (memory-maps the bulk spectrum data to disk and keeps features in heap; this is also MZmine's own default and the lowest-heap-pressure option). `none` keeps everything in heap — only sensible for small datasets with plentiful RAM. `all` memory-maps features and keeps spectra in heap — rarely useful in practice.
+- `--mzmine-memory {none,all,features,centroids,raw,masses_features}` — forwarded to MZmine 4.x's `-memory` flag (uses MZmine's `KeepInMemory` enum). Default is `none`, which matches MZmine's own fallback (everything in JVM heap). `all` memory-maps everything to disk for the lowest heap pressure (best on machines with a small Windows page file). `masses_features` maps the mass-list and feature layers but keeps raw scans in heap. `features` / `centroids` / `raw` map only the named layer. **Note:** earlier versions of this guide listed `{none,mass,all}`, but `mass` is not a valid `KeepInMemory` value in MZmine 4.x — passing it triggers a non-fatal WARNING in the MZmine log followed by a silent exit-1 a few steps later. If you see `Issue while reading keep in memory option from CLI argument` in the log and the pipeline aborts right after, you are running an old K2 that passes the now-invalid `mass` value.
 
 ---
 
@@ -482,7 +484,7 @@ K2 Annotator now also catches this case at startup and refuses to run with an ac
 4. Tick **"Automatically manage paging file size for all drives"**.
 5. Click **OK**, restart Windows when prompted.
 
-**Fallback (if you can't change the page file):** Run with `--mzmine-memory mass` (this is the default in v3.0.17+, so just stay on the default). If still failing, you can edit `mzmine.vmoptions` in your MZmine install folder and set a smaller heap, e.g. `-Xmx2g`. The pipeline does not control MZmine's heap size directly.
+**Fallback (if you can't change the page file):** Run with `--mzmine-memory all` (memory-map everything to disk, lowest heap pressure) or `--mzmine-memory masses_features` (map mass lists + features, keep raw scans in heap). The default `none` keeps everything in heap — fine on machines with plenty of RAM + a healthy page file, but the first thing to change if you hit `paging file is too small`. If switching still fails, you can edit `mzmine.vmoptions` in your MZmine install folder and set a smaller heap, e.g. `-Xmx2g`. The pipeline does not control MZmine's heap size directly.
 - If MZmine still fails on this dataset after the above, copy the **`MZmine command: ...`** line printed by the pipeline and run it manually in a terminal. If it fails there too, the issue is in MZmine's environment, not K2 Annotator.
 
 ---
@@ -778,52 +780,32 @@ If you use K2 in your research, please cite:
 
 ---
 
+## Level 2 Matching Criteria (current production)
+
+Every candidate that earns a Level 2 annotation in K2 Annotator currently must clear all of:
+
+1. **Retention Index agreement**
+   - Experimental RI within ±50 of library RI **AND** within 1.5% relative error
+   - RI calibration is via cubic spline through alkane standards; features outside the alkane RT range are extrapolated and matched normally (no exclusion)
+
+2. **Spectral similarity (NIST-style weighted cosine, 0–1000 scale)**
+   - Reverse dot product > 600 **AND** forward dot product > 500
+   - Computed at unit resolution after the library is trimmed to its top-20 most intense peaks (this equalises peak counts between LR and HR library entries; configurable via `--max-lib-peaks N`)
+
+3. **Exact-mass evidence**
+   - For library entries flagged as truly high-resolution (≥2 sub-Da m/z peaks with at least one in the top 3 by intensity, excluding z=2 half-integer artifacts and 1-decimal-rounded values): re-score with an HR-aware dot product using **10 ppm peak-pair matching**. Both >600 reverse and >500 forward thresholds must clear at the tighter resolution.
+   - For all other library entries: pass an RHRMF (Reverse High-Resolution Mass Filter) score > 75. K2's RHRMF follows Kwiecien 2015 (Anal. Chem. 87, 8328): 10 ppm tolerance, on-the-fly isotopologue substitution for 13C / 37Cl / 81Br / 34S / 30Si, TIC-weighted scoring (∑(mz × intensity)_annotated / ∑(mz × intensity)_observed).
+
+4. **Blank Feature Filter**
+   - Feature's max-sample abundance must exceed `c_factor × (mean_blank + 3·SD_blank)` (standard mode) or the analogous MAD-based threshold (adjusted mode). Default `c_factor = 5.0`; tunable via `--bff-c-factor` and `--bff-mode`.
+
+The framework adapts the Koelmel et al. 2022 GC-HRMS scoring schema (Exposome 2(1) osac007). See [CHANGELOG.md](CHANGELOG.md) for the full version history, including the v3.0.20 / v3.0.21 changes that brought RHRMF and HR-aware spectral matching into line with the literature.
+
+---
+
 ## Version History
 
-### Version 3.0.2 (January 2026)
-- Structure lookup safety: Only InChIKey used for PubChem queries (prevents ambiguous name matches)
-- Fixed multiple library entry handling (same compound with different sources)
-
-### Version 3.0.1 (January 2026)
-- Fixed unique plot generation for multiple library entries of same compound
-- Added Library_Entry_ID column for tracking specific library matches
-
-### Version 3.0.0 (January 2026)
-- **Major Feature**: Surrogate Standard Recovery Analysis
-- New SurrogateConfigScreen for configuring labeled standard tracking
-- Enhanced Sample Classification with Reference samples, Spiked status, Spike Ratios, and Groups
-- Surrogate recovery calculations with group-based normalization
-- New Surrogate Recovery tab in results viewer
-- Separate surrogate CSV output file
-
-### Version 2.9.x (January 2026)
-- Enhanced EPA CompTox integration via ctx-python package
-- Improved hazard data retrieval
-
-### Version 2.8.0 (January 2026)
-- Internal Standard normalization integration in Sample Classification screen
-- Three IS methods: Manual entry, Auto m/z+RI/RT, Auto MSP spectrum
-- IS area and normalization factor columns in CSV reports
-- IS display in GUI sample table
-
-### Version 2.7.0 (2026)
-- Structure helper module for high-resolution images
-- Hazard matrix visualization in PDF reports
-- Statistics module deprecated (external analysis recommended)
-
-### Version 2.6.0 (2026)
-- MZmine integration for feature detection
-- Universal parser supporting MS-DIAL and MZmine formats
-- Improved Blank Feature Filtering
-
-### Version 1.0 (January 2026)
-- Initial release
-- Full pipeline integration
-- Interactive results viewer
-- Project and preset management
-- Support for .CSV and .MSP libraries
-
-See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
+See [CHANGELOG.md](CHANGELOG.md) for the authoritative version history, including bug fixes and feature additions through the current release.
 
 ---
 

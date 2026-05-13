@@ -1,6 +1,6 @@
 ================================================================================
 K2 Annotator
-Version 3.0.8
+Version 3.0.21
 ================================================================================
 
 INSTALLATION INSTRUCTIONS
@@ -46,13 +46,18 @@ installed separately due to licensing requirements:
    - Install to default location or note the path to msconvert.exe
    - Typical path: C:\Program Files\ProteoWizard\msconvert.exe
 
-2. MZmine 3.x (for feature detection and deconvolution)
-   -----------------------------------------------------
+2. MZmine 3.x or 4.x (for feature detection and deconvolution)
+   -------------------------------------------------------------
    - Download: https://github.com/mzmine/mzmine/releases
    - Required for: Processing .mzML files, detecting features
    - Download the Windows installer (mzmine-windows-installer.exe)
    - Note the path to mzmine_console.exe after installation
    - Typical path: C:\Program Files\mzmine\mzmine_console.exe
+   - Tested with MZmine 4.x (4.8.30 in the current development setup).
+     MZmine 3.x is also supported. Note: the CLI flag
+     `--mzmine-memory` exposes MZmine's `KeepInMemory` enum directly;
+     the valid values changed between major versions. K2 Annotator's
+     current default is `none` (matches MZmine 4's own fallback).
 
 
 FIRST-TIME SETUP
@@ -84,10 +89,12 @@ FIRST-TIME SETUP
 INCLUDED FILES
 ==============
 
-K2.exe                  - Main application executable
+K2.exe                  - Main application executable (when installed
+                          from the PyInstaller-built distribution)
+K2.bat                  - Source-tree launch script
 K2_USER_GUIDE.md        - Complete user documentation
 README.md               - Quick overview
-CHANGELOG.md            - Version history
+CHANGELOG.md            - Authoritative version history
 QUICK_START.md          - Getting started guide
 
 config/                 - Configuration files
@@ -99,6 +106,9 @@ users/                  - User settings
 templates/              - Example files
   library_template.csv    - Example library (CSV format)
   library_template.msp    - Example library (MSP format)
+  test_quant.csv          - Tiny test quantification file
+  test_spectra.msp        - Tiny test spectral file
+  TEST_DATA_README.md     - Explanation of the test data set
 
 
 TROUBLESHOOTING
@@ -127,7 +137,20 @@ Solution:
 - Verify library file format (CSV needs peaks_json column)
 - Check RI calibration file format
 - Ensure blank identifier matches sample names
-- Try adjusting matching thresholds
+- Try adjusting matching thresholds (see K2_USER_GUIDE.md
+  "Level 2 Matching Criteria" for the current gating rules)
+
+Problem: Pipeline refuses to start with "Insufficient free disk space
+         for MZmine scratch"
+Solution:
+- MZmine memory-maps mzML data into temp files; on most workflows
+  the peak temp usage is 1.5-3x the total input mzML size. The
+  pre-flight check refuses to start if the scratch volume has less
+  than 1.5x free.
+- Free space on the scratch volume (defaults to %TEMP%), or pass
+  --mzmine-temp pointing at a roomier local drive. Network shares
+  (Z:, SMB mounts) are NOT supported as scratch — Java NIO
+  memory-mapping fails on them.
 
 
 GETTING HELP

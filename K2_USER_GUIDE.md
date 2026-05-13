@@ -773,10 +773,10 @@ Normalized Abundance = Raw Abundance × Normalization Factor
 ---
 
 ## Citation
+If you use K2 Annotator in your research, please cite:
 
-If you use K2 in your research, please cite:
+Brunet, C. (2026). K2 Annotator: an open-source GC-MS suspect screening pipeline. DOI: 10.5281/zenodo.20149465
 
-[Citation information to be added]
 
 ---
 
@@ -811,9 +811,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the authoritative version history, includin
 
 ## Support
 
-For bug reports, feature requests, or questions:
-- [Contact information to be added]
-- [GitHub repository link to be added]
+For bug reports, feature requests, or questions email: brunet.chris@gmail.com. I am not a professional software developer and make no garuntees about what I will be able to help with but will try my best to resolve issues
+or address your needs from the software. 
 
 ---
 

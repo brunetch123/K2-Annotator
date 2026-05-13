@@ -180,16 +180,17 @@ See [requirements.txt](requirements.txt):
 
 If you use K2 Annotator in your research, please cite:
 
-*Brunet, T. (2026). K2 Annotator: an open-source GC-MS suspect screening pipeline. GitHub. https://github.com/brunetch123/K2-GCMS-Pipeline*
+*Brunet, C. (2026). K2 Annotator: an open-source GC-MS suspect screening pipeline. GitHub. https://github.com/brunetch123/K2-GCMS-Pipeline* or the Zenodo Archive: DOI: 10.5281/zenodo.20149465
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License.
 
 ## Support
 
-For bug reports, feature requests, or questions:
-- [GitHub Issues](https://github.com/brunetch123/K2-GCMS-Pipeline/issues)
+For bug reports, feature requests, or questions email: brunet.chris@gmail.com. I am not a professional software developer and make no garuntees about what I will be able to help with but will try my best to resolve issues
+or address your needs from the software. 
+
 
 ---
 

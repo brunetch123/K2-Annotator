@@ -180,7 +180,7 @@ See [requirements.txt](requirements.txt):
 
 If you use K2 Annotator in your research, please cite:
 
-*Brunet, C. (2026). K2 Annotator: an open-source GC-MS suspect screening pipeline. GitHub. https://github.com/brunetch123/K2-GCMS-Pipeline* or the Zenodo Archive: DOI: 10.5281/zenodo.20149465
+*Brunet, C. (2026). K2 Annotator: an open-source GC-MS suspect screening pipeline. DOI: 10.5281/zenodo.20149465
 
 ## License
 

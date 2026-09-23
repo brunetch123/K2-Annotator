@@ -46,7 +46,70 @@ ATOM_MASSES = {sym: atom_mass(sym) for sym in
                 'Na', 'K', 'Se', 'Sn', 'As', 'Hg', 'Ge', 'Al', 'Ti',
                 '2H', '13C', '15N', '18O', '34S', '37Cl', '81Br', 'D']}
 
-def is_library_high_res(spectrum):
+_HR_TRUE = {'high', 'hr', 'hires', 'high-res', 'high_res', 'true', 'yes', '1', 'exact', 'accurate'}
+_HR_FALSE = {'low', 'lr', 'lowres', 'low-res', 'low_res', 'false', 'no', '0', 'unit', 'nominal'}
+_HR_METADATA_KEYS = ('resolution', 'hires', 'high_res', 'highres', 'mass_resolution')
+
+
+def is_library_high_res(spectrum, metadata=None):
+    """Classify a library spectrum as exact-mass ("high-resolution").
+
+    v3.1.0 rule (review finding S-HR-1):
+
+    1. Explicit metadata wins.  If the entry carries one of the keys
+       ``resolution`` / ``hires`` / ``high_res`` / ``highres`` /
+       ``mass_resolution`` (any case) with a value in {high, hr, exact,
+       true, yes, 1, ...} it is HR; with a value in {low, lr, unit,
+       nominal, false, no, 0, ...} it is LR.  Library-curation scripts
+       that know the source instrument should set this.
+    2. Otherwise decide from the *stored precision* of the m/z values:
+       a peak is "exact-mass" if it carries at least three decimal
+       digits (``abs(mz*100 - round(mz*100)) > 1e-6``).  The entry is HR
+       if at least two such peaks exist and at least one of them is among
+       the three most intense peaks.
+
+    Why not the v3.0.21 mass-defect rule (fractional m/z > 0.05 Da, not
+    half-integer, not one-decimal)?  It classified genuinely exact-mass
+    entries as LR whenever the intense fragments happened to have small
+    mass defects -- benzene (77.0386, 78.0464), chlorobenzene (112.0074),
+    dichlorobiphenyl (221.987) -- and treated real long-chain alkyl
+    fragments with defects in 0.40-0.60 Da (C28H57+ 393.446) as z=2
+    artefacts.  The NYCSS SI describes the criterion as ">0.05 Da decimal
+    precision", i.e. stored precision, which is what this rule tests.
+    NIST half-integer artefacts (76.5) and one-decimal entries (93.1)
+    still count as LR because they carry only one decimal digit.
+
+    The previous rule is kept as ``is_library_high_res_v3021`` for audit.
+    """
+    if metadata:
+        for key, value in metadata.items():
+            if str(key).lower() in _HR_METADATA_KEYS:
+                v = str(value).strip().lower()
+                if v in _HR_TRUE:
+                    return True
+                if v in _HR_FALSE:
+                    return False
+    if not spectrum:
+        return False
+    try:
+        by_intensity = sorted(spectrum, key=lambda p: -float(p[1]))
+    except (TypeError, ValueError, IndexError):
+        return False
+    n_exact = 0
+    top3_exact = False
+    for i, peak in enumerate(by_intensity):
+        try:
+            mz = float(peak[0])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if abs(mz * 100.0 - round(mz * 100.0)) > 1e-6:
+            n_exact += 1
+            if i < 3:
+                top3_exact = True
+    return n_exact >= 2 and top3_exact
+
+
+def is_library_high_res_v3021(spectrum):
     """
     Classify a library spectrum as truly high-resolution.
 

@@ -43,7 +43,8 @@ class ReportGenerator:
         headers = [
             "Feature ID", "Library_Entry_ID",  # v3.0.1: Unique ID for each library entry
             "RT", "RI_Exp", "RI_Lib", "RI_Err", "RI_Err%",
-            "Compound_Name", "Formula", "HighRes?", "RHRMF", "RevDot", "FwdDot",
+            "Compound_Name", "Formula", "HighRes?", "RHRMF", "HR_RevDot", "HR_FwdDot",
+            "RevDot", "FwdDot",
             "MaxAbundance", "BFF_Threshold",
             # v3.0.4: BFF audit columns — mode used, the rule that produced the
             # threshold, and (adjusted mode only) the Shapiro-Wilk p-value and
@@ -158,7 +159,11 @@ class ReportGenerator:
                         comp.name,
                         comp.formula,
                         "Yes" if cand.is_high_res_match else "No",
-                        f"{cand.rhrmf_score:.1f}",
+                        # v3.1.0 (S-HR-2): HR entries have no RHRMF; report the
+                        # HR-aware dot products they were gated on instead.
+                        "N/A" if cand.rhrmf_score is None else f"{cand.rhrmf_score:.1f}",
+                        "N/A" if cand.hr_rev_dot is None else cand.hr_rev_dot,
+                        "N/A" if cand.hr_dot is None else cand.hr_dot,
                         cand.reverse_dot_product,
                         cand.dot_product,
                         f"{orig.max_sample_abundance:.0f}",
@@ -338,7 +343,10 @@ class ReportGenerator:
                 
                 # Row 3: Advanced Validations
                 row3_y = score_y - 50
-                rhrmf_val = "N/A" if cand.is_high_res_match else f"{cand.rhrmf_score:.1f}"
+                if cand.rhrmf_score is None:
+                    rhrmf_val = f"N/A (HR dot {cand.hr_rev_dot}/{cand.hr_dot})"
+                else:
+                    rhrmf_val = f"{cand.rhrmf_score:.1f}"
                 c.drawString(70, row3_y, f"RHRMF Score: {rhrmf_val}")
                 c.drawString(200, row3_y, f"Abundance: {orig.max_sample_abundance:.1e}")
                 c.drawString(330, row3_y, f"BFF Thresh: {orig.bff_threshold:.1e}")

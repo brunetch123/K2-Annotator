@@ -118,8 +118,6 @@ def test_feature_ri_reproduced_exactly(csv_run):
             assert seen[ft['id']] == pytest.approx(ft['ri'], abs=0.05), ft['name']
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-HR-1: exact-mass Benzene/Chlorobenzene entries '
-                   'are classified low-res (mass defects < 0.05 Da) and take the RHRMF path')
 def test_exact_mass_entries_take_the_hr_path(csv_run):
     truth, rows, log, out = csv_run
     hr_flags = {r['lib_name']: r['is_hr'] for r in _diag(out) if r['lib_name'].endswith('[HR]')}

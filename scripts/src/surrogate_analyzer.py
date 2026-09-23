@@ -39,9 +39,11 @@ class SurrogateMatch:
     ri_error_percent: float
     forward_dot: int
     reverse_dot: int
-    rhrmf_score: float
+    rhrmf_score: Optional[float]      # None for HR library entries (v3.1.0)
     is_high_res: bool
     library_compound: LibraryCompound = field(repr=False)
+    hr_dot: Optional[int] = None       # HR-aware dot products (HR entries only)
+    hr_rev_dot: Optional[int] = None
 
 
 class SurrogateAnalyzer:
@@ -204,7 +206,9 @@ class SurrogateAnalyzer:
             
             # RI percent error check
             delta_ri = abs(feat.ri - compound.ri)
-            percent_error = (delta_ri / compound.ri) * 100 if compound.ri > 0 else 100
+            # v3.1.0 (S-SUR-2): relative to the FEATURE RI, as in the suspect-
+            # screening engine and the NYCSS SI ("+-1.5 % from the query feature").
+            percent_error = (delta_ri / feat.ri) * 100 if feat.ri > 0 else 100
             
             if percent_error > self.RI_ERROR_PERCENT_MAX:
                 continue
@@ -216,7 +220,7 @@ class SurrogateAnalyzer:
                 continue
             
             # RHRMF check
-            is_hr = is_library_high_res(compound.spectrum)
+            is_hr = is_library_high_res(compound.spectrum, compound.metadata)
             
             if is_hr:
                 # v3.0.21: HR library — re-score with HR-aware dot
@@ -227,10 +231,11 @@ class SurrogateAnalyzer:
                 hr_dot, hr_rev_dot = calculate_scores_hr_aware(
                     feat.spectrum, compound.spectrum,
                     tolerance_ppm=HR_DOT_TOLERANCE_PPM_DEFAULT)
-                rhrmf_score = 100.0  # sentinel; no RHRMF run for HR
+                rhrmf_score = None   # RHRMF not run for HR entries (v3.1.0)
                 passed_rhrmf = (hr_rev_dot > self.REVERSE_DOT_MIN
                                  and hr_dot > self.FORWARD_DOT_MIN)
             else:
+                hr_dot = hr_rev_dot = None
                 # v3.0.20: same Kwiecien-style RHRMF as suspect screening
                 # — 10 ppm tolerance, isotopologues, TIC-weighted scoring.
                 rhrmf_score = calculate_rhrmf_variant(
@@ -255,7 +260,9 @@ class SurrogateAnalyzer:
                 reverse_dot=rev_dot,
                 rhrmf_score=rhrmf_score,
                 is_high_res=is_hr,
-                library_compound=compound
+                library_compound=compound,
+                hr_dot=hr_dot,
+                hr_rev_dot=hr_rev_dot,
             )
             candidates.append(match)
         
@@ -310,18 +317,16 @@ class SurrogateAnalyzer:
         Returns:
             Normalized abundance or None if not available
         """
-        raw_abundance = feature.abundances.get(sample_name)
-        if raw_abundance is None or raw_abundance == 0:
+        abundance = feature.abundances.get(sample_name)
+        if abundance is None or abundance == 0:
             return None
-        
-        # Apply IS normalization if enabled and factors are available
-        if self.is_config.get('enabled', False) and feature.is_normalized:
-            norm_factor = feature.normalization_factors.get(sample_name, 1.0)
-            if norm_factor and norm_factor != 0:
-                return raw_abundance * norm_factor
-        
-        return raw_abundance
-    
+        # v3.1.0 (S-SUR-1): Feature.abundances are ALREADY IS-normalised in
+        # place by InternalStandardNormalizer when IS normalisation is on.
+        # Before v3.1.0 the factor was applied a second time here, so
+        # recoveries scaled with factor**2 (a true 100 % recovery in a sample
+        # with factor 2 was reported as 200 %).
+        return abundance
+
     def calculate_recoveries(self) -> Dict[str, Dict[str, Any]]:
         """
         Calculate % recovery for each surrogate in each spiked sample.
@@ -500,7 +505,8 @@ class SurrogateAnalyzer:
         """
         headers = [
             'Compound', 'Feature_ID', 'RI_Library', 'RI_Experimental', 
-            'RI_Error', 'RI_Error%', 'RevDot', 'FwdDot', 'HighRes', 'RHRMF'
+            'RI_Error', 'RI_Error%', 'RevDot', 'FwdDot', 'HighRes', 'RHRMF',
+            'HR_RevDot', 'HR_FwdDot'
         ]
         
         rows = []
@@ -518,7 +524,9 @@ class SurrogateAnalyzer:
                     'RevDot': '-',
                     'FwdDot': '-',
                     'HighRes': '-',
-                    'RHRMF': '-'
+                    'RHRMF': '-',
+                    'HR_RevDot': '-',
+                    'HR_FwdDot': '-',
                 }
             else:
                 row = {
@@ -531,7 +539,9 @@ class SurrogateAnalyzer:
                     'RevDot': match.reverse_dot,
                     'FwdDot': match.forward_dot,
                     'HighRes': 'Yes' if match.is_high_res else 'No',
-                    'RHRMF': round(match.rhrmf_score, 1)
+                    'RHRMF': 'N/A' if match.rhrmf_score is None else round(match.rhrmf_score, 1),
+                    'HR_RevDot': 'N/A' if match.hr_rev_dot is None else match.hr_rev_dot,
+                    'HR_FwdDot': 'N/A' if match.hr_dot is None else match.hr_dot,
                 }
             
             rows.append(row)

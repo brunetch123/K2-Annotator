@@ -27,8 +27,14 @@ class MatchCandidate:
         self.reverse_dot_product = scores[1]
         self.ri_error = error_ri
         
-        # New attributes for Phase 4
-        self.rhrmf_score = 0.0
+        # Exact-mass evidence (v3.1.0): exactly one of the two is populated.
+        #   LR library entry -> rhrmf_score (0-100), hr_* are None
+        #   HR library entry -> hr_dot / hr_rev_dot (0-1000), rhrmf_score is None
+        # (Before v3.1.0 HR candidates carried a sentinel rhrmf_score of 100.0
+        # that the per-match CSV printed as a real score: finding S-HR-2.)
+        self.rhrmf_score = None
+        self.hr_dot = None
+        self.hr_rev_dot = None
         self.is_high_res_match = False
         self.final_pass = False
 
@@ -225,7 +231,7 @@ class MatchingEngine:
 
                 # K2_DIAG: classify HR up-front so the diagnostic can see
                 # is_hr for every candidate, not just those that pass dots.
-                is_hr = is_library_high_res(lib_comp.spectrum)
+                is_hr = is_library_high_res(lib_comp.spectrum, lib_comp.metadata)
 
                 # 5. Thresholds (Level 2 Criteria)
                 # Rev Dot > 600 AND Dot > 500
@@ -263,7 +269,8 @@ class MatchingEngine:
                         hr_dot, hr_rev_dot = calculate_scores_hr_aware(
                             feat.spectrum, lib_comp.spectrum,
                             tolerance_ppm=HR_DOT_TOLERANCE_PPM_DEFAULT)
-                        cand.rhrmf_score = 100.0  # sentinel; no RHRMF run
+                        cand.hr_dot, cand.hr_rev_dot = hr_dot, hr_rev_dot
+                        cand.rhrmf_score = None   # RHRMF not run on HR entries
                         if hr_rev_dot > 600 and hr_dot > 500:
                             cand.final_pass = True
                         else:
@@ -327,6 +334,7 @@ class MatchingEngine:
                         passed_dot_thresholds=True,
                         is_hr=is_hr,
                         rhrmf_score=cand.rhrmf_score,
+                        hr_dot=cand.hr_dot, hr_rev_dot=cand.hr_rev_dot,
                         final_pass=cand.final_pass,
                         gate_failed=(None if cand.final_pass else 'rhrmf'),
                         # K2_DIAG_VARIANT: side-by-side scores
@@ -377,7 +385,7 @@ class MatchingEngine:
         'lib_peak_count', 'is_hr',
         'delta_ri', 'ri_pct_error', 'passed_ri',
         'dot', 'rev_dot', 'passed_dot_thresholds',
-        'rhrmf_score', 'final_pass',
+        'rhrmf_score', 'hr_dot', 'hr_rev_dot', 'final_pass',
         'gate_failed',
         # K2_DIAG_VARIANT: side-by-side scoring for RHRMF Options 1/2/3.
         # rhrmf_opt0 = explicit Option 0 score (same algorithm as the

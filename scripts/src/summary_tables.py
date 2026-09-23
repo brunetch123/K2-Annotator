@@ -90,7 +90,7 @@ def build_match_summary(results, feature_map):
     """
     headers = [
         "Match_#", "Feature_ID", "Compound_Name", "Library_Entry_ID",
-        "Formula", "RevDot", "FwdDot", "RHRMF", "HighRes",
+        "Formula", "RevDot", "FwdDot", "RHRMF", "HighRes", "HR_RevDot", "HR_FwdDot",
         "Feature_RI", "Library_RI", "RI_Error", "RI_Err_%",
         "Max_Sample_Abundance", "BFF_Threshold",
     ]
@@ -106,7 +106,7 @@ def build_match_summary(results, feature_map):
             comp = cand.compound
             ri_err = cand.ri_error
             ri_pct = (ri_err / orig.ri * 100) if orig.ri else 0.0
-            rhrmf_val = "N/A" if cand.is_high_res_match else f"{cand.rhrmf_score:.1f}"
+            rhrmf_val = "N/A" if cand.rhrmf_score is None else f"{cand.rhrmf_score:.1f}"
             rows.append([
                 match_num,
                 feat_id,
@@ -117,6 +117,8 @@ def build_match_summary(results, feature_map):
                 cand.dot_product,
                 rhrmf_val,
                 "Yes" if cand.is_high_res_match else "No",
+                "N/A" if cand.hr_rev_dot is None else cand.hr_rev_dot,
+                "N/A" if cand.hr_dot is None else cand.hr_dot,
                 f"{orig.ri:.1f}",
                 f"{comp.ri:.1f}",
                 f"{ri_err:.1f}",
@@ -160,7 +162,7 @@ _FEATURE_PDF_HEADERS_FIXED = [
 ]
 _MATCH_PDF_HEADERS = [
     "Match #", "Feat #", "Compound", "Lib ID",
-    "Formula", "RevDot", "FwdDot", "RHRMF", "HiRes",
+    "Formula", "RevDot", "FwdDot", "RHRMF", "HiRes", "HR Rev", "HR Fwd",
     "Feat RI", "Lib RI", "RI Err", "RI Err %",
     "Max Abd", "BFF Thr",
 ]
@@ -168,7 +170,7 @@ _MATCH_PDF_HEADERS = [
 # headers we know are long; narrow for compact numeric fields.
 _MATCH_COL_WEIGHTS = [
     0.6, 0.6, 3.0, 0.7,
-    0.9, 0.9, 0.9, 0.8, 0.7,
+    0.9, 0.9, 0.9, 0.8, 0.7, 0.8, 0.8,
     0.9, 0.9, 0.9, 0.9,
     1.2, 1.0,
 ]

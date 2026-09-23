@@ -299,9 +299,6 @@ def test_hr_detector_accepts_exact_mass_entries(name):
     assert is_library_high_res(md.exact_spectrum(name)) is True
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-HR-1: exact-mass entries whose intense fragments '
-                   'have mass defects < 0.05 Da (small aromatics, halogenated compounds) are '
-                   'classified as low-res and routed to RHRMF instead of the exact-mass path')
 @pytest.mark.parametrize('name', ['Benzene', 'Chlorobenzene'])
 def test_hr_detector_accepts_small_defect_exact_mass_entries(name):
     assert is_library_high_res(md.exact_spectrum(name)) is True
@@ -313,11 +310,20 @@ def test_hr_detector_rejects_integer_half_integer_and_one_decimal():
     assert is_library_high_res([(93.1, 999), (91.1, 500), (136.1, 300)]) is False
 
 
-def test_hr_detector_rejects_real_fragments_with_defect_between_0p4_and_0p6():
-    """Finding S-HR-1 (edge): long-chain alkyl fragments (C28H57+ = 393.446) are
-    treated as z=2 artifacts."""
+def test_hr_detector_accepts_real_fragments_with_defect_between_0p4_and_0p6():
+    """S-HR-1 (fixed): long-chain alkyl fragments (C28H57+ = 393.446) were
+    treated as z=2 artefacts by the v3.0.21 mass-defect rule; the stored-
+    precision rule accepts them."""
     spec = [(393.4455, 999), (379.4299, 800), (57.0699, 100)]   # C28H57+, C27H55+, C4H9+
-    assert is_library_high_res(spec) is False
+    assert is_library_high_res(spec) is True
+
+
+def test_hr_detector_metadata_override():
+    lr = md.lowres_spectrum('Toluene')
+    hr = md.exact_spectrum('Toluene')
+    assert is_library_high_res(lr, {'resolution': 'high'}) is True
+    assert is_library_high_res(hr, {'Resolution': 'LOW'}) is False
+    assert is_library_high_res(hr, {'source': 'NIST'}) is True   # unrelated keys ignored
 
 
 def test_hr_aware_dot_within_and_outside_tolerance():
@@ -328,8 +334,6 @@ def test_hr_aware_dot_within_and_outside_tolerance():
     assert calculate_scores_hr_aware(md.exact_spectrum('Toluene', +30), ref) == (0, 0)
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-HR-2: HR matches get a sentinel RHRMF of 100.0 '
-                   'that the per-match CSV prints as a real score')
 def test_hr_match_rhrmf_not_reported_as_100(tmp_path):
     import csv
     from src.reporter import ReportGenerator
@@ -434,9 +438,6 @@ def test_is_normalisation_equalises_a_feature_that_tracks_the_is():
     assert f_sur.normalization_factors == {'Ref': 1.0, 'S1': 2.0, 'S2': 4.0}
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-SUR-1: SurrogateAnalyzer re-applies the IS '
-                   'factor to abundances that were already normalised in place, so recoveries '
-                   'are inflated by the factor a second time (100 % -> 200 % / 400 %)')
 def test_surrogate_recovery_is_100_when_surrogate_tracks_is():
     samples, f_is, f_sur = _is_setup()
     cfg = dict(enabled=True, library_path='', spiked_samples=['S1', 'S2'],
@@ -450,9 +451,6 @@ def test_surrogate_recovery_is_100_when_surrogate_tracks_is():
     assert rec == {'S1': pytest.approx(100.0), 'S2': pytest.approx(100.0)}
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-SUR-2: the surrogate matcher evaluates the '
-                   '1.5 % RI rule relative to the LIBRARY RI, the suspect-screening engine '
-                   'relative to the FEATURE RI (as the SI states); the two disagree near the boundary')
 def test_surrogate_and_engine_use_same_ri_percent_reference(tmp_path):
     feat_ri, lib_ri = 763.0, 774.5     # 11.5/763 = 1.507 %  vs 11.5/774.5 = 1.485 %
     lr = md.lowres_spectrum('Toluene')

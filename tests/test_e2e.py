@@ -10,16 +10,6 @@ import sys
 
 import pytest
 
-# (feature id, library entry) pairs the manuscripts say should match but the
-# current code rejects — each maps to a finding in the report.
-KNOWN_MISSES = {
-    (19, 'Toluene [LR]'): 'S-RHRMF-1: -5 ppm mass error rejected (electron mass not subtracted)',
-    (19, 'Toluene RI+11 (1.44%) [LR]'): 'S-RHRMF-1: -5 ppm mass error rejected',
-    (15, 'Naphthalene-d8 [LR]'): 'S-RHRMF-2: deuterium dropped from formula',
-    (16, 'Biphenyl-13C12 [LR]'): 'S-RHRMF-2: 13C dropped from formula',
-}
-
-
 def run_cli(k2_scripts, data_dir, out_dir, library, extra=()):
     env = dict(os.environ, K2_DIAG_MATCHING_CSV=os.path.join(out_dir, 'diag.csv'))
     cmd = [sys.executable, 'cli.py',
@@ -71,16 +61,10 @@ def test_no_unexpected_matches(csv_run):
     assert not unexpected, unexpected
 
 
-def test_expected_matches_found_excluding_known_bugs(csv_run):
+def test_all_expected_matches_found(csv_run):
     truth, rows, log, out = csv_run
-    missing = _expected_pairs(truth) - pairs(rows) - set(KNOWN_MISSES)
+    missing = _expected_pairs(truth) - pairs(rows)
     assert not missing, missing
-
-
-@pytest.mark.xfail(strict=True, reason='Known scientific misses; see KNOWN_MISSES / report')
-def test_known_bug_pairs_now_match(csv_run):
-    truth, rows, log, out = csv_run
-    assert set(KNOWN_MISSES) <= pairs(rows)
 
 
 def test_bff_outcomes_match_ground_truth(csv_run):

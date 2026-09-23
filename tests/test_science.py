@@ -165,8 +165,6 @@ def test_empty_spectra_score_zero():
     assert calculate_scores_hr_aware([], md.exact_spectrum('Toluene')) == (0, 0)
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-DOT-2: half-integer m/z values are binned with '
-                   "Python banker's rounding (76.5->76 but 77.5->78)")
 def test_half_integer_binning_is_direction_consistent():
     b = bin_spectrum([(76.5, 1), (77.5, 1)])
     assert set(b) in ({76, 77}, {77, 78})
@@ -201,18 +199,14 @@ def test_rhrmf_perfect_spectrum_passes(name):
     assert s > 75, s
 
 
-def test_rhrmf_perfect_benzene_passes_but_loses_three_peaks():
-    """Finding S-RHRMF-1, TIC-weighted view: benzene still clears 75 (score ~85)
-    only because the heavy peaks carry the ion current; the three peaks below
-    m/z 55 are all rejected."""
+def test_rhrmf_perfect_benzene_scores_100():
+    """S-RHRMF-1 (fixed in v3.1.0): before the electron-mass correction a
+    perfect benzene spectrum scored ~85 because the three peaks below m/z 55
+    were rejected."""
     s = rhrmf(md.exact_spectrum('Benzene'), 'C6H6', md.lowres_spectrum('Benzene'))
-    assert 75 < s < 90, s
+    assert s == pytest.approx(100.0), s
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-RHRMF-1: electron mass is not subtracted from '
-                   'theoretical fragment masses (Kwiecien 2015 SI: "the mass of an electron was '
-                   'subtracted"), so perfectly measured cations below ~m/z 55 fall outside the '
-                   '10 ppm window')
 def test_rhrmf_all_peaks_of_perfect_benzene_are_explained():
     lc = LibraryCompound('x', 'C6H6', 1000, [list(p) for p in md.lowres_spectrum('Benzene')], {})
     count_score = calculate_rhrmf_variant(md.exact_spectrum('Benzene'), lc, EX, tolerance_ppm=10,
@@ -220,13 +214,17 @@ def test_rhrmf_all_peaks_of_perfect_benzene_are_explained():
     assert count_score == pytest.approx(100.0), count_score
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-RHRMF-1 at the single-peak level: C4H3+ at its '
-                   'true m/z 51.0229 is 10.8 ppm from the neutral-mass C4H3 the code compares against')
 def test_rhrmf_true_low_mz_cation_is_explained():
+    """S-RHRMF-1: the ion m/z (cation) must be explained; a value sitting at
+    the *neutral* mass is 10.8 ppm off at m/z 51 and must be rejected, i.e.
+    the +-10 ppm window is centred on the cation."""
     parent = EX.parse_formula('C6H6')
     mz = md.cation_mz({'C': 4, 'H': 3})
-    assert _peak_explained_variant(mz + md.ELECTRON, parent, EX, 10, True) is True  # neutral: ok
-    assert _peak_explained_variant(mz, parent, EX, 10, True) is True                # cation: bug
+    assert _peak_explained_variant(mz, parent, EX, 10, True) is True
+    assert _peak_explained_variant(mz + md.ELECTRON, parent, EX, 10, True) is False
+    assert _peak_explained_variant(mz * (1 + 9e-6), parent, EX, 10, True) is True
+    assert _peak_explained_variant(mz * (1 - 9e-6), parent, EX, 10, True) is True
+    assert _peak_explained_variant(mz * (1 + 11e-6), parent, EX, 10, True) is False
 
 
 def test_rhrmf_tolerates_plus_5ppm_error():
@@ -235,13 +233,11 @@ def test_rhrmf_tolerates_plus_5ppm_error():
     assert s > 75, s
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-RHRMF-1 (consequence): the effective tolerance '
-                   'is asymmetric. A -5 ppm mass-axis error (well inside Kwiecien +-10 ppm) pushes '
-                   'every toluene fragment out of the window because ~6 ppm is already consumed by '
-                   'the missing electron mass; toluene scores 0 at -5 ppm and 100 at +5 ppm')
-def test_rhrmf_tolerates_minus_5ppm_error():
-    s = rhrmf(md.exact_spectrum('Toluene', -5), 'C7H8', md.lowres_spectrum('Toluene'))
-    assert s > 75, s
+@pytest.mark.parametrize('shift', [-9, -5, 0, +5, +9])
+def test_rhrmf_window_is_symmetric(shift):
+    """S-RHRMF-1 (fixed): +-10 ppm, symmetric about the measured cation m/z."""
+    s = rhrmf(md.exact_spectrum('Toluene', shift), 'C7H8', md.lowres_spectrum('Toluene'))
+    assert s == pytest.approx(100.0), (shift, s)
 
 
 @pytest.mark.parametrize('shift', [+30, -30])
@@ -272,15 +268,11 @@ def test_rhrmf_reverse_semantics_skips_feature_only_peaks():
     assert s > 75
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-RHRMF-2: deuterium (2H) is dropped from the '
-                   'parent formula because ATOM_MASSES has no entry for it, so no fragment of a '
-                   'deuterated surrogate can be explained')
 def test_rhrmf_deuterated_surrogate_passes():
     s = rhrmf(md.exact_spectrum('Naphthalene-d8'), 'C10D8', md.lowres_spectrum('Naphthalene-d8'))
     assert s > 75, s
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-RHRMF-2: 13C-labelled formulas are dropped too')
 def test_rhrmf_13C_surrogate_passes():
     s = rhrmf(md.exact_spectrum('Biphenyl-13C12'), '[13C]12H10',
               md.lowres_spectrum('Biphenyl-13C12'))

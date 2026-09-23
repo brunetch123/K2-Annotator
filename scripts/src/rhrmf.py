@@ -1,12 +1,50 @@
 import re
-from molmass import Formula
+import warnings
+from molmass import Formula, ELEMENTS
 
-# Exact masses for common isotopes
-ATOM_MASSES = {
-    'C': 12.00000, 'H': 1.00783, 'N': 14.00307, 'O': 15.99491, 
-    'P': 30.97376, 'S': 31.97207, 'F': 18.99840, 'Cl': 34.96885, 
-    'Br': 78.91834, 'I': 126.90447, 'Si': 27.97693
-}
+from src.spectral_math import ELECTRON_MASS, nominal_mass
+
+# ---------------------------------------------------------------------------
+# Monoisotopic atom masses (v3.1.0).
+#
+# Before v3.1.0 this was a hand-typed table rounded to 5 decimals (H = 1.00783
+# instead of 1.0078250) with no entries for isotopically labelled atoms, so
+# deuterated / 13C-labelled formulas silently lost those atoms (review finding
+# S-RHRMF-2) and hydrogen-rich fragments carried a ~0.8 ppm bias (S-DOC-1).
+# Masses now come from molmass' isotope table.  `atom_mass()` understands the
+# symbols molmass itself emits from Formula.composition(): 'C', 'H', '2H',
+# '13C', ... plus the common aliases 'D', 'T', '[2H]', '[13C]'.
+# ---------------------------------------------------------------------------
+_ALIASES = {'D': '2H', 'T': '3H'}
+_ATOM_MASS_CACHE = {}
+_WARNED_ATOMS = set()
+
+
+def atom_mass(symbol):
+    """Monoisotopic mass of an atom symbol as molmass writes it, or None if
+    the symbol is not a known element/isotope.  Most-abundant isotope for a
+    bare element ('Cl' -> 35Cl); explicit isotope for '37Cl', '2H', '13C'."""
+    if symbol in _ATOM_MASS_CACHE:
+        return _ATOM_MASS_CACHE[symbol]
+    sym = _ALIASES.get(symbol, symbol).strip('[]')
+    m = re.match(r'^(\d+)?([A-Z][a-z]?)$', sym)
+    mass = None
+    if m:
+        try:
+            el = ELEMENTS[m.group(2)]
+            a = int(m.group(1)) if m.group(1) else el.nominalmass
+            mass = el.isotopes[a].mass
+        except (KeyError, AttributeError):
+            mass = None
+    _ATOM_MASS_CACHE[symbol] = mass
+    return mass
+
+
+# Static view kept for callers/tests that import ATOM_MASSES directly.
+ATOM_MASSES = {sym: atom_mass(sym) for sym in
+               ['C', 'H', 'N', 'O', 'P', 'S', 'F', 'Cl', 'Br', 'I', 'Si', 'B',
+                'Na', 'K', 'Se', 'Sn', 'As', 'Hg', 'Ge', 'Al', 'Ti',
+                '2H', '13C', '15N', '18O', '34S', '37Cl', '81Br', 'D']}
 
 def is_library_high_res(spectrum):
     """
@@ -90,7 +128,13 @@ class FormulaExplainer:
             
             for symbol, item in raw_comp.items():
                 clean_comp[symbol] = item.count
-                
+                if atom_mass(symbol) is None and symbol not in _WARNED_ATOMS:
+                    _WARNED_ATOMS.add(symbol)
+                    warnings.warn(
+                        f"RHRMF: atom '{symbol}' in formula {formula_str!r} has no "
+                        f"known monoisotopic mass and will be ignored when "
+                        f"explaining fragments", RuntimeWarning)
+
             self.cache[formula_str] = clean_comp
             return clean_comp
         except Exception:
@@ -98,9 +142,23 @@ class FormulaExplainer:
 
     def explain_peak(self, target_mass, parent_counts, tolerance=0.01):
         """
-        Determines if 'target_mass' can be formed by a sub-combination of 'parent_counts'.
+        Determines whether the measured ion m/z `target_mass` can be formed by
+        a sub-combination of the atoms in `parent_counts` (within `tolerance`
+        Da).
+
+        v3.1.0 (review finding S-RHRMF-1): EI fragment ions are radical
+        cations, so the measured m/z is one electron mass (0.000549 Da)
+        *below* the neutral sub-formula mass.  Kwiecien 2015 (SI, "Theoretical
+        Fragment/Peak Matching") subtracts the electron mass from every
+        theoretical fragment before matching; we do the equivalent by adding
+        it to the measured m/z once.  Without this the +-10 ppm window was
+        centred 6 ppm (m/z 91) to 14 ppm (m/z 39) off, which rejected
+        perfectly measured light fragments and made the effective tolerance
+        asymmetric.
         """
-        elements = tuple(sorted([e for e in parent_counts.keys() if e in ATOM_MASSES]))
+        target_mass = float(target_mass) + ELECTRON_MASS
+        elements = tuple(sorted([e for e in parent_counts.keys()
+                                 if atom_mass(e) is not None]))
         if not elements: return False
         
         # Using a local memoization for the recursive solver to avoid redundant calculations per peak
@@ -120,7 +178,7 @@ class FormulaExplainer:
                 return False
                 
             el = elements[idx]
-            mass_el = ATOM_MASSES[el]
+            mass_el = atom_mass(el)
             max_count = parent_counts[el]
             
             # Theoretical max based on remaining mass
@@ -151,13 +209,13 @@ def calculate_rhrmf(feat_spectrum, lib_compound, explainer=None):
     if not parent_counts:
         return 0.0
 
-    lib_bins = set(int(round(mz)) for mz, _ in lib_compound.spectrum)
+    lib_bins = set(nominal_mass(mz) for mz, _ in lib_compound.spectrum)
 
     matched_peaks = 0
     explained_peaks = 0
 
     for mz_exp, int_exp in feat_spectrum:
-        mz_unit = int(round(mz_exp))
+        mz_unit = nominal_mass(mz_exp)
 
         if mz_unit in lib_bins:
             matched_peaks += 1
@@ -289,13 +347,13 @@ def calculate_rhrmf_variant(feat_spectrum, lib_compound, explainer=None,
     if not parent_counts:
         return 0.0
 
-    lib_bins = set(int(round(mz)) for mz, _ in lib_compound.spectrum)
+    lib_bins = set(nominal_mass(mz) for mz, _ in lib_compound.spectrum)
 
     if score_mode == 'count':
         matched = 0
         explained = 0
         for mz_exp, _int_exp in feat_spectrum:
-            mz_unit = int(round(mz_exp))
+            mz_unit = nominal_mass(mz_exp)
             if mz_unit not in lib_bins:
                 continue
             matched += 1
@@ -311,7 +369,7 @@ def calculate_rhrmf_variant(feat_spectrum, lib_compound, explainer=None,
         observed_tic = 0.0
         annotated_tic = 0.0
         for mz_exp, int_exp in feat_spectrum:
-            mz_unit = int(round(mz_exp))
+            mz_unit = nominal_mass(mz_exp)
             if mz_unit not in lib_bins:
                 continue
             try:

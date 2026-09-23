@@ -1,4 +1,21 @@
+import math
+
 import numpy as np
+
+# Mass of the electron (CODATA 2018), Da.  EI fragment ions are singly
+# charged cations, so the measured m/z is this much below the neutral
+# fragment mass.  Used by the RHRMF (rhrmf.py) since v3.1.0.
+ELECTRON_MASS = 0.000548579909
+
+
+def nominal_mass(mz):
+    """Unit-mass bin for an m/z value: round half UP (76.5 -> 77, 77.5 -> 78).
+
+    v3.1.0 (review finding S-DOT-2): the previous `int(round(mz))` used
+    Python's banker's rounding, so 76.5 -> 76 but 77.5 -> 78 — inconsistent
+    for the half-integer z=2 artefacts present in some NIST entries.
+    """
+    return int(math.floor(float(mz) + 0.5))
 
 
 # v3.0.21: default ppm tolerance for HR-aware peak pairing.
@@ -27,7 +44,7 @@ def bin_spectrum(peaks):
             intensity = float(peak[1])
             if mz < 0 or intensity < 0:
                 continue
-            mass_bin = int(round(mz))
+            mass_bin = nominal_mass(mz)
             if mass_bin not in binned:
                 binned[mass_bin] = 0.0
             binned[mass_bin] += intensity

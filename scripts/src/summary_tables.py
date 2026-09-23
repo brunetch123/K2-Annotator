@@ -48,7 +48,7 @@ def build_feature_summary(feature_map, sample_columns, blank_columns=None,
     include_set = set(include_ids) if include_ids is not None else None
 
     headers = [
-        "Feature_ID", "RT", "RI",
+        "Feature_ID", "RT", "RI", "RI_Extrapolated",
         "Detection_Frequency_%", "Samples_Detected", "Total_Samples",
         "Mean_Sample_Abundance", "Max_Sample_Abundance",
         "Passed_BFF",
@@ -70,6 +70,7 @@ def build_feature_summary(feature_map, sample_columns, blank_columns=None,
             feat.id,
             f"{feat.rt:.2f}",
             f"{feat.ri:.1f}",
+            "Yes" if getattr(feat, 'ri_extrapolated', False) else "No",
             f"{freq:.1f}",
             detected,
             n_samples,
@@ -155,7 +156,7 @@ def _truncate(s, n):
 # but PDF columns can't. Mapping is positional: the i-th display header
 # is shown above the i-th data column.
 _FEATURE_PDF_HEADERS_FIXED = [
-    "Feat #", "RT", "RI",
+    "Feat #", "RT", "RI", "RI ext",
     "Det %", "Det N", "Tot N",
     "Mean Abd", "Max Abd",
     "BFF",
@@ -175,7 +176,7 @@ _MATCH_COL_WEIGHTS = [
     1.2, 1.0,
 ]
 _FEATURE_FIXED_COL_WEIGHTS = [
-    0.7, 0.8, 0.9,
+    0.7, 0.8, 0.9, 0.6,
     0.9, 0.7, 0.7,
     1.3, 1.3,
     0.7,

@@ -93,15 +93,11 @@ def test_zero_blank_columns_is_an_error(tmp_path):
         up.parse_files(_write(tmp_path / 'q.csv', QUANT), _write(tmp_path / 's.msp', _mzmine_msp()))
 
 
-@pytest.mark.xfail(strict=True, reason='Finding D-4: a header-less alkane table loses its first '
-                   'row to the header line, so the C10 anchor disappears')
 def test_ri_cal_without_header(tmp_path):
     cal = RICalibrator(_write(tmp_path / 'cal.txt', "10\t15.25\n11\t18.29\n12\t21.58\n13\t25.1\n"))
-    assert cal.carbon_numbers[0] == 10
+    assert cal.carbon_numbers == [10, 11, 12, 13]
 
 
-@pytest.mark.xfail(strict=True, reason='Finding D-4: a missing calibration path is silently ignored '
-                   'by RICalibrator.__init__; every feature then gets RI 0 and nothing matches')
 def test_ri_cal_missing_file_raises(tmp_path):
-    with pytest.raises(Exception):
+    with pytest.raises(FileNotFoundError):
         RICalibrator(str(tmp_path / 'does_not_exist.txt'))

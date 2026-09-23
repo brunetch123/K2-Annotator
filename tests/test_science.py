@@ -126,12 +126,9 @@ def test_ri_absolute_rule_binds_at_high_ri(tmp_path, delta, expect):
     assert ('T' in names) is expect
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-RI-2: features with RI=0 (no calibration) are '
-                   'silently unmatchable; the engine should refuse or warn because RI is a '
-                   'mandatory Level-2 criterion')
 def test_engine_refuses_features_without_ri(tmp_path):
     lr = md.lowres_spectrum('Toluene')
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='retention index'):
         _engine_with_library(tmp_path, 0.0, [('T', 'C7H8', 0, lr)])
 
 
@@ -412,12 +409,50 @@ def test_ri_spline_extrapolation_is_unbounded_and_can_be_non_monotonic(tmp_path)
     assert not monotonic or max(devs) > 0   # informational; see report
 
 
-@pytest.mark.xfail(strict=True, reason='Finding S-RI-1: RICalibrator gives no indication that a RT '
-                   'lies outside the calibrated alkane range')
 def test_ri_calibrator_flags_extrapolation(tmp_path):
     cal = _calibrator(tmp_path)
-    assert hasattr(cal, 'is_in_range')
     assert cal.is_in_range(3.0) is False
+    assert cal.is_in_range(md.alkane_rt(10)) is True
+    assert cal.is_in_range(md.alkane_rt(26) + 1) is False
+    assert cal.rt_range == (md.alkane_rt(10), md.alkane_rt(26))
+
+
+def test_ri_linear_extrapolation_matches_van_den_dool(tmp_path):
+    p = tmp_path / 'cal.txt'
+    with open(p, 'w') as fh:
+        fh.write('Carbon number\tRT(min)\n')
+        for n in md.CN_CAL:
+            fh.write(f'{n}\t{md.alkane_rt(n)}\n')
+    lin = RICalibrator(str(p), extrapolation='linear')
+    spl = RICalibrator(str(p), extrapolation='spline')
+    r0, r1 = md.alkane_rt(10), md.alkane_rt(11)
+    for rt in (3.0, 6.0, 12.0):
+        expected = 100 * (10 + (rt - r0) / (r1 - r0))
+        assert lin.rt_to_ri(rt) == pytest.approx(expected)
+    rN1, rN = md.alkane_rt(25), md.alkane_rt(26)
+    assert lin.rt_to_ri(rN + 5) == pytest.approx(100 * (26 + 5 / (rN - rN1)))
+    # inside the range both modes are the same spline
+    for n in md.CN_CAL:
+        assert lin.rt_to_ri(md.alkane_rt(n)) == pytest.approx(spl.rt_to_ri(md.alkane_rt(n)))
+    mid = (md.alkane_rt(15) + md.alkane_rt(16)) / 2
+    assert lin.rt_to_ri(mid) == pytest.approx(spl.rt_to_ri(mid))
+    with pytest.raises(ValueError):
+        RICalibrator(str(p), extrapolation='cubic')
+
+
+def test_ri_calibration_rejects_bad_tables(tmp_path):
+    def cal(text):
+        p = tmp_path / 'c.txt'
+        p.write_text(text)
+        return RICalibrator(str(p))
+    with pytest.raises(ValueError, match='duplicate'):
+        cal('10\t1\n10\t2\n11\t3\n')
+    with pytest.raises(ValueError, match='increase'):
+        cal('10\t3\n11\t2\n12\t4\n')
+    with pytest.raises(ValueError, match='at least 3'):
+        cal('10\t1\n11\t2\n')
+    c = cal('carbon,rt\n10,1\n11,2\n12,3.5\n')      # comma delimited + header
+    assert c.carbon_numbers == [10, 11, 12]
 
 
 # ===========================================================================

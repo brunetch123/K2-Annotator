@@ -78,6 +78,19 @@ def test_bff_outcomes_match_ground_truth(csv_run):
         assert (feat_rows[ft['id']]['Passed_BFF'] == 'Yes') is ft['expected_bff_pass'], ft['name']
 
 
+def test_ri_extrapolation_flag_in_outputs(csv_run):
+    truth, rows, log, out = csv_run
+    summ = [f for f in os.listdir(out) if f.endswith('_feature_summary.csv')][0]
+    with open(os.path.join(out, summ), newline='') as fh:
+        flags = {int(r['Feature_ID']): r['RI_Extrapolated'] for r in csv.DictReader(fh)}
+    assert flags[1] == 'Yes'      # toluene, RI 763 < C10
+    assert flags[3] == 'No'       # naphthalene, inside range
+    assert flags[18] == 'Yes'     # RI 2750 > C26
+    r = next(r for r in rows if int(r['Feature ID']) == 1)
+    assert r['RI_Extrapolated'] == 'Yes'
+    assert 'elute outside the alkane calibration range' in log
+
+
 def test_bff_threshold_value_in_csv(csv_run):
     truth, rows, log, out = csv_run
     r = next(r for r in rows if int(r['Feature ID']) == 1)

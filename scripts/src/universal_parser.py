@@ -70,6 +70,9 @@ class Feature:
         self.rt = float(retention_time) if retention_time else 0.0
         self.ri = float(retention_index) if retention_index else 0.0
         self.mz = float(mz) if mz else None  # Base m/z (v2.6.0)
+        # v3.1.0 (S-RI-1): True when the RI came from outside the calibrated
+        # alkane RT range (cubic-spline or linear extrapolation).
+        self.ri_extrapolated = False
 
         # Data
         self.abundances = {} # {sample_name: float}
@@ -169,11 +172,13 @@ class UniversalParser:
         # RI Calibration (for MZmine)
         self.ri_calibrator = None
 
-    def set_ri_calibrator(self, calibration_file):
+    def set_ri_calibrator(self, calibration_file, extrapolation='spline'):
         """
         Sets up RI calibration for MZmine data (which only has RT).
+        `extrapolation`: 'spline' (v3.0.x behaviour) or 'linear' outside the
+        alkane range; see ri_calibration.py.
         """
-        self.ri_calibrator = RICalibrator(calibration_file)
+        self.ri_calibrator = RICalibrator(calibration_file, extrapolation=extrapolation)
 
     def detect_format(self, quant_file, msp_file):
         """
@@ -429,8 +434,10 @@ class UniversalParser:
                 rt = float(row['row retention time'])
 
                 # Calculate RI from RT using calibration
+                ri_extrapolated = False
                 if self.ri_calibrator and self.ri_calibrator.is_calibrated():
                     ri = self.ri_calibrator.rt_to_ri(rt)
+                    ri_extrapolated = not self.ri_calibrator.is_in_range(rt)
                 else:
                     ri = 0.0  # No RI available
 
@@ -443,6 +450,7 @@ class UniversalParser:
                         pass
 
                 feat = Feature(feat_id, rt, ri, mz)
+                feat.ri_extrapolated = ri_extrapolated
 
                 # Extract abundances
                 all_cols = self.blank_columns + self.sample_columns

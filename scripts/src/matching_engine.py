@@ -41,12 +41,15 @@ class MatchCandidate:
 class MatchingEngine:
     def __init__(self, data_dir, quant_file, msp_file, library_file, ri_cal_file=None, blank_identifier="fieldblank",
                  sample_types=None, is_config=None, reference_samples=None, bff_mode='standard',
-                 bff_c_factor=5.0, max_lib_peaks=MAX_LIB_PEAKS_DEFAULT):
+                 bff_c_factor=5.0, max_lib_peaks=MAX_LIB_PEAKS_DEFAULT,
+                 ri_extrapolation='spline'):
         self.data_dir = data_dir
         self.quant_file = quant_file  # Changed from area_file to quant_file (more generic)
         self.msp_file = msp_file
         self.library_file = library_file
         self.ri_cal_file = ri_cal_file
+        # v3.1.0 (S-RI-1): how RIs outside the alkane range are derived.
+        self.ri_extrapolation = ri_extrapolation
         self.blank_identifier = blank_identifier
         self.sample_types = sample_types  # Optional: {sample_name: 'sample' or 'blank'}
 
@@ -110,11 +113,30 @@ class MatchingEngine:
         # 2. Set RI Calibrator if provided (for MZmine)
         if self.ri_cal_file:
             print(f"Loading RI calibration from: {self.ri_cal_file}")
-            self.parser.set_ri_calibrator(self.ri_cal_file)
+            self.parser.set_ri_calibrator(self.ri_cal_file, extrapolation=self.ri_extrapolation)
 
         # 3. Parse Files (auto-detects format)
         print("Parsing quantification and spectral files...")
         self.parser.parse_files(self.quant_file, self.msp_file, sample_types=self.sample_types)
+
+        # v3.1.0 (S-RI-2): RI is a mandatory Level-2 criterion.  MZmine output
+        # carries only retention times, so without an alkane calibration every
+        # feature would get RI 0 and the run would silently find nothing.
+        if self.parser.format_type == 'mzmine' and not (
+                self.parser.ri_calibrator and self.parser.ri_calibrator.is_calibrated()):
+            raise ValueError(
+                "MZmine input has retention times only; an alkane RI calibration file "
+                "(--ri-cal) is required for Level-2 matching.")
+        feats_all = self.parser.get_feature_list()
+        n_no_ri = sum(1 for f in feats_all if not f.ri or f.ri <= 0)
+        n_extrap = sum(1 for f in feats_all if getattr(f, 'ri_extrapolated', False))
+        if n_no_ri:
+            print(f"[WARNING] {n_no_ri} of {len(feats_all)} features have no RI (RI <= 0) "
+                  f"and cannot receive a Level-2 annotation.")
+        if n_extrap:
+            print(f"[WARNING] {n_extrap} of {len(feats_all)} features elute outside the alkane "
+                  f"calibration range; their RI is extrapolated ({self.ri_extrapolation}) and "
+                  f"flagged RI_Extrapolated=Yes in the outputs.")
 
         # 4. Internal Standard Normalization (v2.6.0) - BEFORE BFF
         features = self.parser.get_feature_list()
@@ -180,6 +202,13 @@ class MatchingEngine:
 
         features = self.parser.get_feature_list()
         library = self.library_parser.get_compounds()
+
+        # v3.1.0 (S-RI-2): refuse to "match" a dataset that carries no RI at all.
+        screenable = [f for f in features if f.passed_bff]
+        if screenable and all((not f.ri) or f.ri <= 0 for f in screenable):
+            raise ValueError(
+                "No feature that passed the blank filter has a retention index; "
+                "Level-2 matching requires RI (supply an alkane calibration file).")
         
         # Pre-calculate library RI list for binary searching
         lib_ris = [c.ri for c in library]

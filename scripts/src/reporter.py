@@ -42,7 +42,7 @@ class ReportGenerator:
         # v3.0.1: Added Library_Entry_ID for unique library entry tracking
         headers = [
             "Feature ID", "Library_Entry_ID",  # v3.0.1: Unique ID for each library entry
-            "RT", "RI_Exp", "RI_Lib", "RI_Err", "RI_Err%",
+            "RT", "RI_Exp", "RI_Extrapolated", "RI_Lib", "RI_Err", "RI_Err%",
             "Compound_Name", "Formula", "HighRes?", "RHRMF", "HR_RevDot", "HR_FwdDot",
             "RevDot", "FwdDot",
             "MaxAbundance", "BFF_Threshold",
@@ -153,6 +153,7 @@ class ReportGenerator:
                         lib_idx,  # v3.0.1: Library_Entry_ID for unique tracking
                         f"{orig.rt:.3f}",
                         f"{orig.ri:.1f}",
+                        "Yes" if getattr(orig, 'ri_extrapolated', False) else "No",
                         f"{comp.ri:.1f}",
                         f"{cand.ri_error:.2f}",
                         f"{ri_pct:.2f}",

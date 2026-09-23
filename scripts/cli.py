@@ -74,6 +74,16 @@ Examples:
     )
 
     parser.add_argument(
+        '--ri-extrapolation',
+        choices=['spline', 'linear'],
+        default='spline',
+        help='How retention indices are derived for features eluting outside the alkane '
+             'calibration range: "spline" (default; the cubic spline is extended, as in '
+             'v3.0.x) or "linear" (van den Dool linear extrapolation from the terminal '
+             'alkane pair). Extrapolated features are flagged RI_Extrapolated=Yes either way.'
+    )
+
+    parser.add_argument(
         '--blank-id', '-b',
         default='fieldblank',
         help='String to identify blank samples (case-insensitive). Default: "fieldblank"'
@@ -272,6 +282,7 @@ Examples:
             bff_mode=args.bff_mode,  # v3.0.4
             bff_c_factor=args.bff_c_factor,  # v3.0.5
             max_lib_peaks=args.max_lib_peaks,  # v3.0.19
+            ri_extrapolation=args.ri_extrapolation,  # v3.1.0
         )
 
         # Load data

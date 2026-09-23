@@ -23,7 +23,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 USER_AGENT = "K2-Annotator/3.1.1"
-TIMEOUT = (5, 20)  # (connect, read) seconds
+TIMEOUT = (5, 15)  # (connect, read) seconds
 RETRY_STATUS = (429, 500, 502, 503, 504)
 
 # Hosts that are rate limited -> max requests per second
@@ -131,8 +131,11 @@ def breaker_status():
 
 
 def _build_session():
+    # v3.1.1: two retries (three attempts). Together with the circuit breaker
+    # this bounds the time lost to an unresponsive host to about one minute
+    # per run instead of per compound.
     retry = Retry(
-        total=3,
+        total=2,
         backoff_factor=0.5,
         status_forcelist=list(RETRY_STATUS),
         allowed_methods=frozenset(["GET", "HEAD", "OPTIONS"]),

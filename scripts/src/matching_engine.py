@@ -42,7 +42,7 @@ class MatchingEngine:
     def __init__(self, data_dir, quant_file, msp_file, library_file, ri_cal_file=None, blank_identifier="fieldblank",
                  sample_types=None, is_config=None, reference_samples=None, bff_mode='standard',
                  bff_c_factor=5.0, max_lib_peaks=MAX_LIB_PEAKS_DEFAULT,
-                 ri_extrapolation='spline'):
+                 ri_extrapolation='spline', allow_no_blanks=False):
         self.data_dir = data_dir
         self.quant_file = quant_file  # Changed from area_file to quant_file (more generic)
         self.msp_file = msp_file
@@ -50,6 +50,8 @@ class MatchingEngine:
         self.ri_cal_file = ri_cal_file
         # v3.1.0 (S-RI-1): how RIs outside the alkane range are derived.
         self.ri_extrapolation = ri_extrapolation
+        # v3.1.0 (S-BFF-1): zero blank columns is an error unless opted out.
+        self.allow_no_blanks = bool(allow_no_blanks)
         self.blank_identifier = blank_identifier
         self.sample_types = sample_types  # Optional: {sample_name: 'sample' or 'blank'}
 
@@ -108,7 +110,8 @@ class MatchingEngine:
     def load_data(self):
         print("--- Loading Data ---")
         # 1. Initialize Universal Parser
-        self.parser = UniversalParser(self.data_dir, blank_identifier=self.blank_identifier)
+        self.parser = UniversalParser(self.data_dir, blank_identifier=self.blank_identifier,
+                                      allow_no_blanks=self.allow_no_blanks)
 
         # 2. Set RI Calibrator if provided (for MZmine)
         if self.ri_cal_file:
@@ -171,6 +174,12 @@ class MatchingEngine:
                 success, feat_id = normalizer.normalize_auto_msp(msp_file, value_tol, use_rt)
                 if not success:
                     print("[WARNING] Auto MSP IS normalization failed")
+
+            # v3.1.0 (D-9): expose the IS areas actually used (auto methods
+            # detect them from the data) so the CSV can report them.
+            self.is_config['is_values'] = dict(normalizer.is_values)
+            self.is_config['normalization_factors'] = dict(normalizer.normalization_factors)
+            self.is_config['is_feature_id'] = normalizer.is_feature_id
 
             # Export normalization report if requested
             if self.is_config.get('export_report', False):

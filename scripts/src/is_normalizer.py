@@ -32,6 +32,7 @@ class InternalStandardNormalizer:
         self.normalization_factors = {}  # {sample_name: float}
         self.max_is_value = 0.0
         self.missing_samples = []  # Samples without IS values
+        self.is_feature_id = None  # feature used as IS (auto methods), v3.1.0
 
     def normalize_manual(self, is_values_dict):
         """
@@ -94,7 +95,8 @@ class InternalStandardNormalizer:
         print(f"[IS Normalizer] Found IS feature: ID={is_feature.id}, Total Abundance={candidates[0][1]:.0f}")
 
         # Use this feature's abundances as IS values
-        self.is_values = is_feature.abundances.copy()
+        self.is_feature_id = is_feature.id
+        self.is_values = dict(getattr(is_feature, 'raw_abundances', None) or is_feature.abundances)
 
         if self._apply_normalization():
             return True, is_feature.id
@@ -156,7 +158,8 @@ class InternalStandardNormalizer:
         print(f"[IS Normalizer] Found IS feature: ID={is_feature.id}, RDP={rdp:.1f}, DP={dp:.1f}")
 
         # Use this feature's abundances as IS values
-        self.is_values = is_feature.abundances.copy()
+        self.is_feature_id = is_feature.id
+        self.is_values = dict(getattr(is_feature, 'raw_abundances', None) or is_feature.abundances)
 
         if self._apply_normalization():
             return True, is_feature.id
@@ -165,79 +168,37 @@ class InternalStandardNormalizer:
 
     def _parse_msp_file(self, msp_file_path, use_rt=False):
         """
-        Parse MSP file to extract spectrum and RI or RT.
-
-        Args:
-            use_rt: If True, parse RT field instead of RI
-
-        Returns:
-            tuple: (spectrum: list of (mz, intensity), value: float)
+        Parse the internal-standard MSP file (first record) and return
+        (spectrum, RI or RT).  Uses the shared tolerant reader (v3.1.0, D-3):
+        BOM, any key case, 'Retention_index:', ';'-separated peaks.  A file
+        with several records triggers a warning and the first is used.
         """
-        spectrum = []
-        ri = 0.0
-        rt = 0.0
-
+        from src.msp_reader import read_msp, parse_ri, parse_rt
         try:
-            with open(msp_file_path, 'r') as f:
-                lines = f.readlines()
-
-            in_peaks = False
-            for line in lines:
-                line = line.strip()
-
-                if not line:
-                    continue
-
-                # Look for RI
-                if line.upper().startswith('RETENTIONINDEX:') or line.upper().startswith('RI:') or line.upper().startswith('KOVATS:'):
-                    parts = line.split(':', 1)
-                    if len(parts) == 2:
-                        try:
-                            ri = float(parts[1].strip())
-                        except:
-                            pass
-
-                # Look for RT (Retention Time)
-                elif line.upper().startswith('RETENTIONTIME:') or line.upper().startswith('RT:') or line.upper().startswith('RETENTION TIME:'):
-                    # Only parse RT if it's not RI/RETENTIONINDEX
-                    if not line.upper().startswith('RTI') and not 'INDEX' in line.upper():
-                        parts = line.split(':', 1)
-                        if len(parts) == 2:
-                            try:
-                                rt = float(parts[1].strip())
-                            except:
-                                pass
-
-                # Look for peak count
-                elif line.upper().startswith('NUM PEAKS:') or line.upper().startswith('NUM_PEAKS:'):
-                    in_peaks = True
-                    continue
-
-                # Parse peaks
-                elif in_peaks:
-                    # Peaks are in format: "m/z intensity" or "m/z intensity; comment"
-                    parts = line.split(';')[0].strip().split()
-                    if len(parts) >= 2:
-                        try:
-                            mz = float(parts[0])
-                            intensity = float(parts[1])
-                            spectrum.append((mz, intensity))
-                        except:
-                            pass
-
-            # Return RT or RI based on user choice
-            value = rt if use_rt else ri
-            return spectrum, value
-
-        except Exception as e:
+            records = read_msp(msp_file_path)
+        except OSError as e:
             print(f"[IS Normalizer] Error parsing MSP file: {e}")
             return [], 0.0
+        if not records:
+            print(f"[IS Normalizer] No records found in {msp_file_path}")
+            return [], 0.0
+        if len(records) > 1:
+            print(f"[IS Normalizer] WARNING: {len(records)} records in {msp_file_path}; "
+                  f"using the first one as the internal standard")
+        fields, peaks = records[0]
+        value = parse_rt(fields) if use_rt else parse_ri(fields)
+        if value is None:
+            print(f"[IS Normalizer] WARNING: no {'RT' if use_rt else 'RI'} field in the IS MSP; "
+                  f"the retention window check is skipped")
+            value = 0.0
+        return [(mz, i) for mz, i in peaks], float(value)
 
     def _apply_normalization(self):
         """
         Apply normalization using self.is_values.
 
-        Normalization factor = max(is_values) / is_value, applied
+        Normalization factor = max(is_values) / is_value (NOT the median, as
+        an older user guide stated), applied
         multiplicatively to feature abundances. Samples whose IS
         response is below the maximum had reduced injection efficiency
         (or matrix suppression) and so receive a factor > 1, which
@@ -258,9 +219,21 @@ class InternalStandardNormalizer:
             print("[IS Normalizer] No IS values to apply")
             return False
 
-        # Find max IS value
-        valid_is_values = {s: v for s, v in self.is_values.items() if v > 0}
+        # v3.1.0 (D-10): coerce and validate IS values up front so a string
+        # from a hand-edited config fails with a clear message instead of a
+        # TypeError deep inside the loop.
+        coerced = {}
+        bad = []
+        for sample, v in self.is_values.items():
+            try:
+                coerced[sample] = float(v)
+            except (TypeError, ValueError):
+                bad.append((sample, v))
+        if bad:
+            raise ValueError(f"[IS Normalizer] non-numeric IS value(s): {bad}")
+        self.is_values = coerced
 
+        valid_is_values = {s: v for s, v in self.is_values.items() if v > 0}
         if not valid_is_values:
             print("[IS Normalizer] All IS values are zero or negative")
             return False
@@ -268,41 +241,36 @@ class InternalStandardNormalizer:
         self.max_is_value = max(valid_is_values.values())
 
         # Calculate normalization factors
+        self.normalization_factors = {}
         self.missing_samples = []
-
         for sample in self.sample_names:
             is_val = self.is_values.get(sample, 0)
-
             if is_val <= 0:
                 # No IS value - do not normalize this sample
                 self.normalization_factors[sample] = 1.0
                 self.missing_samples.append(sample)
             else:
-                # factor = max(IS) / sample_IS  (≥ 1 for all but the
-                # max-IS sample, which keeps factor = 1). Multiplying
-                # abundances by this factor scales lower-IS samples up
-                # to the reference injection level.
+                # factor = max(IS) / sample_IS  (>= 1 for all but the max-IS
+                # sample, which keeps factor = 1).
                 self.normalization_factors[sample] = self.max_is_value / is_val
 
-        # Apply normalization to all features
+        # Apply normalization to all features.  v3.1.0 (D-10): always compute
+        # from the parsed (raw) abundances so calling this twice, or after an
+        # earlier normalisation in the same session, gives the same result
+        # instead of scaling twice.
         normalized_count = 0
-
         for feat in self.features:
-            # Add normalization tracking attributes
+            raw = getattr(feat, 'raw_abundances', None)
+            if not raw:
+                raw = dict(feat.abundances)
+                feat.raw_abundances = raw
             feat.is_normalized = True
             feat.normalization_factors = {}
-
             for sample in self.sample_names:
-                if sample in feat.abundances:
+                if sample in raw:
                     factor = self.normalization_factors[sample]
-                    original_abundance = feat.abundances[sample]
-
-                    # Multiply abundance by normalization factor
-                    feat.abundances[sample] = original_abundance * factor
-
-                    # Store factor for this sample
+                    feat.abundances[sample] = raw[sample] * factor
                     feat.normalization_factors[sample] = factor
-
             normalized_count += 1
 
         print(f"[IS Normalizer] Normalized {normalized_count} features")
@@ -310,8 +278,8 @@ class InternalStandardNormalizer:
 
         if self.missing_samples:
             print(f"[IS Normalizer] WARNING: {len(self.missing_samples)} samples without IS data (not normalized):")
-            for s in self.missing_samples:
-                print(f"  - {s}")
+            for smp in self.missing_samples:
+                print(f"  - {smp}")
 
         return True
 
@@ -339,15 +307,15 @@ class InternalStandardNormalizer:
             output_path: Path to save CSV file
         """
         try:
-            with open(output_path, 'w') as f:
-                f.write("Sample,IS_Value,Normalization_Factor,Status\n")
-
+            import csv
+            with open(output_path, 'w', newline='', encoding='utf-8') as f:
+                w = csv.writer(f)
+                w.writerow(["Sample", "IS_Value", "Normalization_Factor", "Status"])
                 for sample in self.sample_names:
                     is_val = self.is_values.get(sample, 0)
                     factor = self.normalization_factors.get(sample, 1.0)
                     status = "Normalized" if sample not in self.missing_samples else "Not Normalized"
-
-                    f.write(f"{sample},{is_val:.2f},{factor:.4f},{status}\n")
+                    w.writerow([sample, f"{is_val:.2f}", f"{factor:.4f}", status])
 
             print(f"[IS Normalizer] Exported normalization factors to: {output_path}")
             return True

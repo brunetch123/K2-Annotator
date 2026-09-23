@@ -50,7 +50,7 @@ def build_feature_summary(feature_map, sample_columns, blank_columns=None,
     headers = [
         "Feature_ID", "RT", "RI", "RI_Extrapolated",
         "Detection_Frequency_%", "Samples_Detected", "Total_Samples",
-        "Mean_Sample_Abundance", "Max_Sample_Abundance",
+        "Mean_Sample_Abundance", "Mean_Detected_Abundance", "Max_Sample_Abundance",
         "Passed_BFF",
     ] + [f"Abundance_{c}" for c in all_cols]
 
@@ -63,7 +63,11 @@ def build_feature_summary(feature_map, sample_columns, blank_columns=None,
 
         detected = sum(1 for a in sample_abunds if a > 0)
         freq = (detected / n_samples * 100) if n_samples > 0 else 0.0
+        # Mean_Sample_Abundance averages over ALL sample columns with
+        # non-detects counted as 0; Mean_Detected_Abundance averages only the
+        # samples in which the feature was detected (v3.1.0, D-9).
         mean_ab = (sum(sample_abunds) / n_samples) if n_samples > 0 else 0.0
+        mean_det = (sum(a for a in sample_abunds if a > 0) / detected) if detected else 0.0
         max_ab = max(sample_abunds) if sample_abunds else 0.0
 
         row = [
@@ -75,6 +79,7 @@ def build_feature_summary(feature_map, sample_columns, blank_columns=None,
             detected,
             n_samples,
             f"{mean_ab:.0f}",
+            f"{mean_det:.0f}",
             f"{max_ab:.0f}",
             "Yes" if getattr(feat, 'passed_bff', False) else "No",
         ] + [f"{a:.0f}" for a in all_abunds]
@@ -158,7 +163,7 @@ def _truncate(s, n):
 _FEATURE_PDF_HEADERS_FIXED = [
     "Feat #", "RT", "RI", "RI ext",
     "Det %", "Det N", "Tot N",
-    "Mean Abd", "Max Abd",
+    "Mean Abd", "Mean Det", "Max Abd",
     "BFF",
 ]
 _MATCH_PDF_HEADERS = [
@@ -178,7 +183,7 @@ _MATCH_COL_WEIGHTS = [
 _FEATURE_FIXED_COL_WEIGHTS = [
     0.7, 0.8, 0.9, 0.6,
     0.9, 0.7, 0.7,
-    1.3, 1.3,
+    1.3, 1.3, 1.3,
     0.7,
 ]
 

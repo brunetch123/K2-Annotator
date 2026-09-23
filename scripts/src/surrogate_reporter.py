@@ -214,7 +214,7 @@ class SurrogateReporter:
                     else:
                         c.setFillColor(colors.darkgreen)
                 
-                display_val = str(val)[:15] if val else ''
+                display_val = '' if val is None or val == '' else str(val)[:15]
                 c.drawString(x, cursor_y, display_val)
                 c.setFillColor(colors.black)
                 x += col_widths[i]

@@ -331,6 +331,59 @@ def test_hr_aware_dot_within_and_outside_tolerance():
     assert calculate_scores_hr_aware(md.exact_spectrum('Toluene', +30), ref) == (0, 0)
 
 
+def test_reporter_metadata_fallback_and_reference_exclusion(tmp_path):
+    """D-9: 'instrument'/'comments' keys reach the report; reference samples
+    are excluded from feature-summary statistics."""
+    import csv
+    from src.reporter import ReportGenerator
+    from src.library_parser import LibraryCompound
+    from src.matching_engine import MatchCandidate
+    lc = LibraryCompound('Tol', 'C7H8', 763, [list(p) for p in md.lowres_spectrum('Toluene')],
+                         {'instrument': 'GC-QTOF', 'comments': 'hello'})
+    f = Feature(1, 9.0, 763.0); f.spectrum = md.exact_spectrum('Toluene'); f.passed_bff = True
+    f.abundances = {'B1': 10.0, 'S1': 100.0, 'REF': 5000.0}
+    cand = MatchCandidate(lc, (1000, 1000), 0.0); cand.rhrmf_score = 98.0; cand.final_pass = True
+    rep = ReportGenerator({1: [cand]}, [f], output_dir=str(tmp_path),
+                          sample_columns=['B1', 'S1', 'REF'], blank_columns=['B1'],
+                          reference_samples=['REF'])
+    path = rep.generate_csv('m.csv')
+    with open(path) as fh:
+        row = list(csv.DictReader(fh))[0]
+    assert row['Instrument'] == 'GC-QTOF' and row['Comments'] == 'hello'
+    assert row['RHRMF'] == '98.0' and row['HR_RevDot'] == 'N/A'
+    fcsv, _ = rep.generate_summary_csvs('s')
+    with open(fcsv) as fh:
+        frow = list(csv.DictReader(fh))[0]
+    assert frow['Total_Samples'] == '1'                 # REF excluded
+    assert frow['Max_Sample_Abundance'] == '100'
+    assert frow['Mean_Detected_Abundance'] == '100'
+    rep.cleanup()
+    assert not os.path.exists(os.path.join(str(tmp_path), 'temp_assets'))
+
+
+def test_is_normalisation_is_idempotent_and_validates_input():
+    """D-10."""
+    samples = ['Ref', 'S1']
+    f = Feature(1, 10, 1000); f.abundances = {'Ref': 1000.0, 'S1': 500.0}
+    f.raw_abundances = dict(f.abundances)
+    norm = InternalStandardNormalizer([f], samples)
+    assert norm.normalize_manual({'Ref': 1000, 'S1': 500})
+    assert f.abundances['S1'] == pytest.approx(1000.0)
+    assert norm.normalize_manual({'Ref': 1000, 'S1': 500})     # second call: same result
+    assert f.abundances['S1'] == pytest.approx(1000.0)
+    assert f.raw_abundances['S1'] == 500.0
+    with pytest.raises(ValueError, match='non-numeric'):
+        norm.normalize_manual({'Ref': '1000', 'S1': 'abc'})
+
+
+def test_is_msp_parsed_through_shared_reader(tmp_path):
+    p = tmp_path / 'is.msp'
+    p.write_text("NAME: dPCB30\nRetention_index: 1800\nNUM_PEAKS: 2\n260.989 999; 262.986 970;\n")
+    norm = InternalStandardNormalizer([], [])
+    spec, ri = norm._parse_msp_file(str(p))
+    assert spec == [(260.989, 999.0), (262.986, 970.0)] and ri == 1800.0
+
+
 def test_hr_match_rhrmf_not_reported_as_100(tmp_path):
     import csv
     from src.reporter import ReportGenerator

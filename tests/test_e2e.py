@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-def run_cli(k2_scripts, data_dir, out_dir, library, extra=()):
+def run_cli(k2_scripts, data_dir, out_dir, library, extra=(), expect_code=0):
     env = dict(os.environ, K2_DIAG_MATCHING_CSV=os.path.join(out_dir, 'diag.csv'))
     cmd = [sys.executable, 'cli.py',
            '--quant', os.path.join(data_dir, 'quant.csv'),
@@ -19,7 +19,9 @@ def run_cli(k2_scripts, data_dir, out_dir, library, extra=()):
            '--ri-cal', os.path.join(data_dir, 'ri_cal.txt'),
            '--blank-id', 'fieldblank', '--csv-only', '--output', out_dir] + list(extra)
     r = subprocess.run(cmd, cwd=k2_scripts, capture_output=True, text=True, env=env, timeout=600)
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    assert r.returncode == expect_code, (r.returncode, r.stdout[-3000:] + r.stderr[-3000:])
+    if expect_code != 0:
+        return [], r.stdout
     matches = [f for f in os.listdir(out_dir) if f.endswith('.csv') and '_matches_' in f]
     assert len(matches) == 1, os.listdir(out_dir)
     with open(os.path.join(out_dir, matches[0]), newline='', encoding='utf-8') as fh:
@@ -51,7 +53,7 @@ def test_pipeline_runs_and_loads_library(csv_run):
     truth, rows, log, out = csv_run
     assert 'Valid Compounds (Sorted by RI): 24' in log      # 25 entries, one has no RI
     assert 'Skipped (No RI/Spectra):        1' in log
-    assert 'Found 2 Blanks and 4 Samples' in log
+    assert 'Sample classification: 2 blank(s), 4 sample(s)' in log
 
 
 def test_no_unexpected_matches(csv_run):
@@ -89,6 +91,69 @@ def test_ri_extrapolation_flag_in_outputs(csv_run):
     r = next(r for r in rows if int(r['Feature ID']) == 1)
     assert r['RI_Extrapolated'] == 'Yes'
     assert 'elute outside the alkane calibration range' in log
+
+
+def test_run_manifest_written(csv_run):
+    truth, rows, log, out = csv_run
+    with open(os.path.join(out, 'run_manifest.json')) as fh:
+        m = json.load(fh)
+    for key in ('k2_version', 'timestamp', 'python', 'packages', 'args', 'inputs',
+                'sample_classification', 'library', 'ri_calibration', 'counts', 'outputs'):
+        assert key in m, key
+    assert m['k2_version'] == '3.1.0'
+    assert m['inputs']['library']['sha256'] and m['inputs']['quant']['size'] > 0
+    assert m['sample_classification']['blanks'] == ['FieldBlank_01', 'FieldBlank_02']
+    assert m['counts']['features'] == len(truth['features'])
+    assert m['counts']['features_with_level2_match'] == len(set(r['Feature ID'] for r in rows))
+    assert m['library']['max_peaks'] == 20 and m['args']['ri_extrapolation'] == 'spline'
+    assert m['args']['api_key'] is None
+    assert not os.path.exists(os.path.join(out, 'temp_assets'))
+
+
+def test_zero_match_run_exits_2_and_still_writes_summaries(k2_scripts, dataset, tmp_path):
+    data_dir, truth = dataset
+    lib = tmp_path / 'far.csv'
+    lib.write_text('name,formula,ri,peaks_json\nNothing,C7H8,9000,"[[91,999]]"\n')
+    out = tmp_path / 'out'
+    _, log = run_cli(k2_scripts, data_dir, str(out), 'library.csv',
+                     extra=['--library', str(lib)], expect_code=2)
+    assert 'NO Level 2 matches' in log
+    assert any(f.endswith('_feature_summary.csv') for f in os.listdir(out))
+    assert os.path.exists(out / 'run_manifest.json')
+
+
+def test_missing_blanks_is_an_error_unless_allowed(k2_scripts, dataset, tmp_path):
+    data_dir, truth = dataset
+    _, log = run_cli(k2_scripts, data_dir, str(tmp_path / 'a'), 'library.csv',
+                     extra=['--blank-id', 'nosuchblank'], expect_code=1)
+    assert 'No blank columns were identified' in log
+    rows, log = run_cli(k2_scripts, data_dir, str(tmp_path / 'b'), 'library.csv',
+                        extra=['--blank-id', 'nosuchblank', '--allow-no-blanks'])
+    assert 'Continuing WITHOUT blank filtering' in log
+
+
+def test_missing_ri_cal_for_mzmine_is_an_error(k2_scripts, dataset, tmp_path):
+    data_dir, truth = dataset
+    cmd = [sys.executable, 'cli.py', '--quant', os.path.join(data_dir, 'quant.csv'),
+           '--msp', os.path.join(data_dir, 'spectra.msp'),
+           '--library', os.path.join(data_dir, 'library.csv'), '--csv-only',
+           '--output', str(tmp_path)]
+    r = subprocess.run(cmd, cwd=k2_scripts, capture_output=True, text=True, timeout=600)
+    assert r.returncode == 1 and 'RI calibration' in r.stdout
+
+
+def test_csv_only_and_pdf_only_are_exclusive(k2_scripts, dataset, tmp_path):
+    data_dir, truth = dataset
+    _, log = run_cli(k2_scripts, data_dir, str(tmp_path), 'library.csv',
+                     extra=['--pdf-only'], expect_code=1)
+
+
+def test_run_name_used_in_output_files(k2_scripts, dataset, tmp_path):
+    data_dir, truth = dataset
+    run_cli(k2_scripts, data_dir, str(tmp_path), 'library.csv', extra=['--name', 'MyRun'])
+    names = os.listdir(tmp_path)
+    assert any(n.startswith('MyRun_matches_') for n in names)
+    assert any(n.startswith('MyRun_') and n.endswith('_feature_summary.csv') for n in names)
 
 
 def test_bff_threshold_value_in_csv(csv_run):
@@ -147,8 +212,6 @@ def test_gross_mass_error_rejected_by_exact_mass_criteria(csv_run):
             assert r['final_pass'] == 'False'             # RHRMF / HR-aware dot can
 
 
-@pytest.mark.xfail(strict=True, reason='Finding D-1: --grouping is parsed but never used, so a '
-                   'sample re-classified as Blank in the GUI table does not change the BFF')
 def test_grouping_json_changes_blank_set(k2_scripts, dataset, tmp_path):
     data_dir, truth = dataset
     grouping = {'Sample_D': {'type': 'Blank'}, 'FieldBlank_01': {'type': 'Blank'},
@@ -158,4 +221,5 @@ def test_grouping_json_changes_blank_set(k2_scripts, dataset, tmp_path):
     gpath.write_text(json.dumps(grouping))
     rows, log = run_cli(k2_scripts, data_dir, str(tmp_path / 'out'), 'library.csv',
                         extra=['--grouping', str(gpath)])
-    assert 'Found 3 Blanks and 3 Samples' in log
+    assert 'Sample classification: 3 blank(s), 3 sample(s)' in log
+    assert set(int(r['Feature ID']) for r in rows)  # run still produced matches

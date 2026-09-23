@@ -3,6 +3,8 @@ import sys
 import json
 import os
 
+from src.msp_reader import iter_msp, field, parse_ri
+
 
 # v3.0.19: Trim library spectra to this many peaks (by intensity) at
 # load time. NIST/Wiley LR entries average ~70 peaks; HR Orbitrap-
@@ -14,6 +16,9 @@ import os
 # → rev_dot 167 (FAIL)) purely because of this asymmetry.
 # 20 was chosen to roughly match the feature-peak-count median
 # coming out of MZmine deconvolution; tune via --max-lib-peaks.
+# NOTE (v3.1.0, S-TRIM-1): this trim changes dot products and the RHRMF
+# reverse-filter set for any entry with more than N peaks; the value used
+# is recorded in the run manifest and must be reported with results.
 MAX_LIB_PEAKS_DEFAULT = 20
 
 
@@ -31,15 +36,10 @@ def _trim_spectrum(peaks, max_peaks):
         return peaks
     if len(peaks) <= max_peaks:
         return peaks
-    # Pick top-N by intensity. Defensive cast in case peaks are
-    # lists vs tuples or carry strange types (library JSON is
-    # user-supplied and we've seen the occasional surprise).
     try:
         top = sorted(peaks, key=lambda p: -float(p[1]))[:max_peaks]
     except (TypeError, ValueError, IndexError):
         return peaks
-    # Re-sort to m/z asc so PDF mirror plots, CSV dumps, etc. still
-    # see a conventionally-ordered spectrum.
     try:
         top.sort(key=lambda p: float(p[0]))
     except (TypeError, ValueError, IndexError):
@@ -56,17 +56,19 @@ class LibraryCompound:
         self.formula = formula
         self.ri = float(ri)
         self.spectrum = spectrum  # List of [mz, intensity]
-        self.metadata = metadata  # Dictionary of ALL other columns
+        self.metadata = metadata  # Dictionary of ALL other columns (keys lower-cased)
         self.library_index = library_index  # v3.0.1: Unique ID within loaded library
 
     def __repr__(self):
         return f"<LibComp '{self.name}' RI={self.ri:.1f} Peaks={len(self.spectrum)} LibIdx={self.library_index}>"
+
 
 class LibraryParser:
     def __init__(self, library_path, max_peaks=MAX_LIB_PEAKS_DEFAULT):
         self.library_path = library_path
         self.max_peaks = max_peaks  # v3.0.19: per-compound spectrum trim
         self.compounds = []
+        self.stats = {}  # v3.1.0: load statistics for the run manifest
 
     def load_library(self):
         """
@@ -80,9 +82,7 @@ class LibraryParser:
         if not os.path.exists(self.library_path):
             raise FileNotFoundError(f"Library not found at {self.library_path}")
 
-        # Detect format
         ext = os.path.splitext(self.library_path)[1].lower()
-
         if ext == '.msp':
             self._load_msp()
         elif ext == '.csv':
@@ -90,15 +90,36 @@ class LibraryParser:
         else:
             raise ValueError(f"Unsupported library format: {ext}. Expected .csv or .msp")
 
+        if not self.compounds:
+            raise ValueError(
+                f"Library {self.library_path} yielded no usable entries (every entry lacked an "
+                f"RI or a spectrum, or the file format was not recognised).")
+        self._report_unknown_atoms()
+
+    def _report_unknown_atoms(self):
+        """v3.1.0 (S-RHRMF-2): warn about formulas with atoms the RHRMF cannot use."""
+        try:
+            from src.rhrmf import FormulaExplainer, atom_mass
+        except ImportError:
+            return
+        ex = FormulaExplainer()
+        bad = []
+        for c in self.compounds:
+            if not c.formula:
+                continue
+            comp = ex.parse_formula(c.formula)
+            if any(atom_mass(sym) is None for sym in comp):
+                bad.append(c.name)
+        self.stats['formulas_with_unknown_atoms'] = len(bad)
+        if bad:
+            print(f"[WARNING] {len(bad)} library entries contain atoms with no known mass "
+                  f"(RHRMF will ignore them), e.g. {bad[:5]}")
+
     def _load_csv(self):
         """
         Stream reads the CSV library.
         """
-
-        # Bump CSV field size cap to handle very long peaks_json columns.
-        # sys.maxsize is 2**63-1 on 64-bit Python, but csv.field_size_limit
-        # takes a C long, which is 32-bit on Windows even in 64-bit builds.
-        # Halve until it fits.
+        # csv.field_size_limit takes a C long (32-bit on Windows); shrink until accepted.
         max_int = sys.maxsize
         while True:
             try:
@@ -107,45 +128,38 @@ class LibraryParser:
             except OverflowError:
                 max_int = int(max_int / 10)
 
-
         valid_count = 0
         skipped_count = 0
 
-        with open(self.library_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(self.library_path, 'r', newline='', encoding='utf-8-sig', errors='replace') as f:
             reader = csv.reader(f)
-            header = next(reader)
-            
-            # Map columns
-            col_map = {name: i for i, name in enumerate(header)}
-            
-            # Critical Indices
             try:
-                idx_name = col_map.get('name')
-                idx_formula = col_map.get('formula')
-                idx_ri = col_map.get('ri')
-                idx_peaks = col_map.get('peaks_json')
-                
-                if any(idx is None for idx in [idx_name, idx_formula, idx_ri, idx_peaks]):
-                    missing = [k for k in ['name', 'formula', 'ri', 'peaks_json'] if col_map.get(k) is None]
-                    raise ValueError(f"Library CSV is missing required columns: {missing}")
-            except Exception as e:
-                raise ValueError(f"Error parsing library header: {e}")
+                header = next(reader)
+            except StopIteration:
+                raise ValueError(f"Library CSV {self.library_path} is empty")
 
-            for row_idx, row in enumerate(reader):
-                if not row: continue # Skip empty rows
-                
-                # 1. Check RI
+            col_map = {name.strip(): i for i, name in enumerate(header)}
+            lower_map = {name.strip().lower(): i for i, name in enumerate(header)}
+            idx_name = lower_map.get('name')
+            idx_formula = lower_map.get('formula')
+            idx_ri = lower_map.get('ri')
+            idx_peaks = lower_map.get('peaks_json')
+            missing = [k for k, v in (('name', idx_name), ('formula', idx_formula),
+                                      ('ri', idx_ri), ('peaks_json', idx_peaks)) if v is None]
+            if missing:
+                raise ValueError(f"Library CSV is missing required columns: {missing}")
+
+            for row in reader:
+                if not row:
+                    continue
+                # 1. RI
+                ri_str = row[idx_ri] if len(row) > idx_ri else ""
                 try:
-                    ri_str = row[idx_ri] if len(row) > idx_ri else ""
-                    if not ri_str or ri_str.strip() == "":
-                        skipped_count += 1
-                        continue
                     ri_val = float(ri_str)
-                except (ValueError, IndexError):
+                except (ValueError, TypeError):
                     skipped_count += 1
                     continue
-
-                # 2. Check Spectrum
+                # 2. Spectrum
                 try:
                     peaks_str = row[idx_peaks] if len(row) > idx_peaks else "[]"
                     spectrum = json.loads(peaks_str)
@@ -155,180 +169,78 @@ class LibraryParser:
                 except (json.JSONDecodeError, IndexError):
                     skipped_count += 1
                     continue
-
-                # v3.0.19: trim to top-N peaks by intensity before
-                # the compound is stored. See _trim_spectrum docstring.
                 spectrum = _trim_spectrum(spectrum, self.max_peaks)
 
-                # 3. Capture Metadata (Everything in the row)
-                # We store it as a dictionary {ColumnName: Value}
                 metadata = {}
                 for col_name, idx in col_map.items():
-                    if idx < len(row):
-                        metadata[col_name] = row[idx]
-                    else:
-                        metadata[col_name] = ""
+                    metadata[col_name.lower()] = row[idx] if idx < len(row) else ""
 
-                # 4. Create Object
                 name = row[idx_name] if len(row) > idx_name else "Unknown"
                 formula = row[idx_formula] if len(row) > idx_formula else ""
-
-                comp = LibraryCompound(name, formula, ri_val, spectrum, metadata)
-                self.compounds.append(comp)
+                self.compounds.append(LibraryCompound(name, formula, ri_val, spectrum, metadata))
                 valid_count += 1
-                
                 if valid_count % 5000 == 0:
                     print(f"Loaded {valid_count} valid compounds...", end='\r')
 
-        # SORT the library by RI immediately for binary search optimization
         self.compounds.sort(key=lambda x: x.ri)
-        
-        # v3.0.1: Assign unique library indices after sorting
         self._assign_library_indices()
-
+        self.stats.update(format='csv', valid=valid_count, skipped=skipped_count,
+                          max_peaks=self.max_peaks)
         print(f"\nLibrary Loading Complete (CSV).")
         print(f"Valid Compounds (Sorted by RI): {valid_count}")
         print(f"Skipped (No RI/Spectra):        {skipped_count}")
 
     def _load_msp(self):
         """
-        Load library from MSP format (NIST/MassBank style).
+        Load library from MSP format (NIST/MassBank style) through the shared
+        tolerant reader (v3.1.0, D-3).
 
-        Required fields in MSP:
-        - NAME: Compound name
-        - RI: or RetentionIndex: Retention Index value
-        - FORMULA: Molecular formula (optional but recommended)
-        - Num Peaks: Number of spectral peaks
-        - Peak list: m/z intensity pairs
-
-        Optional fields become metadata.
+        Required fields: NAME (or Compound Name), a retention index
+        (RI / RetentionIndex / Retention_index / Kovats, first number used),
+        and at least one peak.  FORMULA is optional but required for RHRMF.
+        All header fields become lower-cased metadata keys.
         """
         valid_count = 0
         skipped_count = 0
+        for fields, peaks in iter_msp(self.library_path):
+            comp = self._parse_msp_compound(fields, peaks)
+            if comp:
+                self.compounds.append(comp)
+                valid_count += 1
+                if valid_count % 5000 == 0:
+                    print(f"Loaded {valid_count} valid compounds...", end='\r')
+            else:
+                skipped_count += 1
 
-        with open(self.library_path, 'r', encoding='utf-8', errors='replace') as f:
-            current_compound = {}
-            current_peaks = []
-            reading_peaks = False
-            num_peaks = 0
-
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-
-                # Skip empty lines between compounds
-                if not line:
-                    # Save compound if we have one
-                    if current_compound:
-                        comp = self._parse_msp_compound(current_compound, current_peaks)
-                        if comp:
-                            self.compounds.append(comp)
-                            valid_count += 1
-                        else:
-                            skipped_count += 1
-
-                        # Reset for next compound
-                        current_compound = {}
-                        current_peaks = []
-                        reading_peaks = False
-                        num_peaks = 0
-                    continue
-
-                # Reading spectral peaks
-                if reading_peaks:
-                    try:
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            mz = float(parts[0])
-                            intensity = float(parts[1])
-                            current_peaks.append([mz, intensity])
-
-                            # Check if we've read all peaks
-                            if len(current_peaks) >= num_peaks:
-                                reading_peaks = False
-                    except ValueError:
-                        pass  # Skip malformed peak lines
-                    continue
-
-                # Parse metadata fields
-                if ':' in line:
-                    key, value = line.split(':', 1)
-                    key = key.strip().upper()
-                    value = value.strip()
-
-                    # Store all fields
-                    current_compound[key] = value
-
-                    # Check for Num Peaks to start reading spectrum
-                    if key == 'NUM PEAKS':
-                        try:
-                            num_peaks = int(value)
-                            if num_peaks > 0:
-                                reading_peaks = True
-                        except ValueError:
-                            pass
-
-            # Don't forget last compound
-            if current_compound:
-                comp = self._parse_msp_compound(current_compound, current_peaks)
-                if comp:
-                    self.compounds.append(comp)
-                    valid_count += 1
-                else:
-                    skipped_count += 1
-
-        # SORT the library by RI immediately
         self.compounds.sort(key=lambda x: x.ri)
-        
-        # v3.0.1: Assign unique library indices after sorting
         self._assign_library_indices()
-
+        self.stats.update(format='msp', valid=valid_count, skipped=skipped_count,
+                          max_peaks=self.max_peaks)
         print(f"\nLibrary Loading Complete (MSP).")
         print(f"Valid Compounds (Sorted by RI): {valid_count}")
         print(f"Skipped (No RI/Spectra):        {skipped_count}")
 
-    def _parse_msp_compound(self, metadata, peaks):
+    def _parse_msp_compound(self, fields, peaks):
         """
-        Convert MSP metadata and peaks into LibraryCompound object.
+        Convert MSP fields and peaks into a LibraryCompound.
         Returns None if required fields are missing.
         """
-        # Required: NAME
-        name = metadata.get('NAME') or metadata.get('COMPOUND NAME')
+        name = field(fields, 'NAME', 'COMPOUND NAME')
         if not name:
             return None
-
-        # Required: RI (check multiple possible field names)
-        ri_str = (metadata.get('RI') or
-                  metadata.get('RETENTIONINDEX') or
-                  metadata.get('RETENTION INDEX') or
-                  metadata.get('KOVATS'))
-        if not ri_str:
+        ri = parse_ri(fields)
+        if ri is None:
             return None
-
-        try:
-            ri = float(ri_str)
-        except ValueError:
+        if not peaks:
             return None
-
-        # Required: Valid spectrum
-        if not peaks or len(peaks) == 0:
-            return None
-
-        # Optional: Formula
-        formula = metadata.get('FORMULA') or metadata.get('MOLECULAR FORMULA') or ""
-
-        # Convert metadata keys to lowercase for consistency
-        metadata_clean = {k.lower(): v for k, v in metadata.items()}
-
-        # v3.0.19: trim to top-N peaks by intensity before stash.
-        peaks = _trim_spectrum(peaks, self.max_peaks)
-
+        formula = field(fields, 'FORMULA', 'MOLECULAR FORMULA', default='') or ''
+        metadata_clean = {k.lower(): v for k, v in fields.items()}
+        peaks = _trim_spectrum([[mz, i] for mz, i in peaks], self.max_peaks)
         return LibraryCompound(name, formula, ri, peaks, metadata_clean)
 
     def _assign_library_indices(self):
         """
         v3.0.1: Assign unique library indices to all compounds after sorting.
-        This ensures each library entry has a unique ID for tracking through
-        the matching pipeline, even when the same compound appears multiple times.
         """
         for idx, comp in enumerate(self.compounds, start=1):
             comp.library_index = idx

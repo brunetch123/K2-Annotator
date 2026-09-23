@@ -124,3 +124,9 @@ generate_rhrmf_slides.py
 
 # Cursor AI
 .cursor/
+
+# Tests / runs
+tests/synth/data/
+results/
+temp_assets/
+.pytest_cache/

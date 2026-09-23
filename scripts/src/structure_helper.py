@@ -27,6 +27,7 @@ import requests
 from src import http_session
 from src.ctx_client import HAZARD_CATEGORIES, empty_matrix
 
+PUBCHEM_HOST = "pubchem.ncbi.nlm.nih.gov"
 PUBCHEM_PUG = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
 PUBCHEM_PUG_VIEW = "https://pubchem.ncbi.nlm.nih.gov/rest/pug_view"
 COMPTOX_DASHBOARD = "https://comptox.epa.gov/dashboard"
@@ -313,7 +314,7 @@ class StructureHelper:
         save_path = os.path.join(self.temp_dir, filename)
         if os.path.exists(save_path):
             return save_path
-        if filename in self._image_failed:
+        if filename in self._image_failed or not http_session.is_available(PUBCHEM_HOST):
             return None
 
         # Only use InChIKey for structure lookup (v3.0.2)
@@ -414,9 +415,15 @@ class StructureHelper:
         if cached is not None:
             return cached
 
+        # v3.1.1: once the EPA API has given up and PubChem is unreachable there
+        # is nothing left to ask, so answer at once instead of waiting through
+        # another round of timeouts for every remaining compound.
+        if not self.lookups_possible():
+            return {}, ["Skipped (API unavailable)"], epa_url
+
         try:
             # 1. EPA CompTox via ctx-python (only with an API key)
-            if self._ctx_client is not None:
+            if self._ctx_client is not None and self._ctx_client.is_available:
                 dtxsid = self._ctx_client.resolve_dtxsid(cas) if cas else None
                 if not dtxsid and name:
                     dtxsid = self._ctx_client.resolve_dtxsid(name)
@@ -451,6 +458,22 @@ class StructureHelper:
         except FETCH_ERRORS as e:
             print(f"[Hazard] fetch failed for {key}: {type(e).__name__}: {str(e)[:120]}")
             return {}, ["Data Fetch Error"], epa_url
+
+    def lookups_possible(self):
+        """True while at least one hazard source can still be queried."""
+        ctx_ok = self._ctx_client is not None and self._ctx_client.is_available
+        pubchem_ok = http_session.is_available(PUBCHEM_HOST)
+        return ctx_ok or pubchem_ok
+
+    def api_status(self):
+        """Availability summary for the run manifest / log."""
+        return {
+            "epa_ctx": (None if self._ctx_client is None else
+                        ("available" if self._ctx_client.is_available
+                         else f"unavailable: {self._ctx_client.unavailable_reason}")),
+            "pubchem": "available" if http_session.is_available(PUBCHEM_HOST) else "unavailable",
+            "breakers": http_session.breaker_status(),
+        }
 
     def get_enhanced_hazard(self, cas: str) -> dict:
         """

@@ -29,7 +29,7 @@ When K2 opens:
    - Batch file: `config\gc_ei_workflow.mzbatch` (included)
    - Library: your own CSV or MSP file (see `templates/`)
    - RI calibration: an n-alkane table such as `templates/ri_calibration_template.txt`
-     (required for MZmine data — RI is a mandatory Level-2 criterion)
+     (required for MZmine data, given that the retention index is a Level 2 criterion)
    - RI Cal: optional, your own tab-delimited alkane RT table
 
 5. Check **"Save as default"** boxes so you don't have to do this again
@@ -96,13 +96,14 @@ python scripts\k2_gui.py
 
 A tiny validation dataset is bundled in `templates/`:
 
-- `library_template.csv` / `library_template.msp` — example library entries
-- `test_quant.csv` / `test_spectra.msp` — example MZmine-format inputs
-- `TEST_DATA_README.md` — explanation of the test features and expected matching behavior
+- `library_template.csv` / `library_template.msp`: example library entries
+- `test_quant.csv` / `test_spectra.msp`: example MZmine-format inputs
+- `ri_calibration_template.txt`: alkane calibration table for the example data
+- `TEST_DATA_README.md`: explanation of the test features and expected matching behavior
 
 This data is for sanity-checking the GUI flow and validating that the
 matching engine runs end-to-end. It is not a production library or
-sample set — use your own data for real analyses.
+sample set. Use your own data for real analyses.
 
 ---
 

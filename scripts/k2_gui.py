@@ -23,7 +23,7 @@ from k2_screens import get_resource_path
 try:
     from src.version import __version__ as K2_VERSION
 except Exception:
-    K2_VERSION = "3.1.0"
+    K2_VERSION = "3.1.1"
 
 # Keys copied from pipeline_config into the user defaults when saving a
 # .K2config preset (v3.1.0). Deliberately excludes per-project data

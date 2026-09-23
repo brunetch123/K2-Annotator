@@ -97,6 +97,10 @@ Examples:
     fmt = parser.add_mutually_exclusive_group()
     fmt.add_argument('--csv-only', action='store_true', help='Generate only CSV reports (skip PDF)')
     fmt.add_argument('--pdf-only', action='store_true', help='Generate only the PDF report (skip CSV)')
+    parser.add_argument('--no-hazard', action='store_true',
+                        help='Skip all EPA CompTox / PubChem lookups (hazard columns and structure images). '
+                             'Lookups are also abandoned automatically for the rest of a run once an API '
+                             'stops responding.')
     parser.add_argument('--keep-assets', action='store_true',
                         help='Keep the temp_assets/ folder (mirror plots, structure images) after the run')
 
@@ -308,6 +312,7 @@ def main(argv=None):
             surrogate_analyzer=surrogate_analyzer,
             blank_columns=engine.parser.blank_columns,
             reference_samples=reference_samples,
+            hazard_lookups=not args.no_hazard,
         )
 
         written = {}
@@ -360,6 +365,7 @@ def main(argv=None):
                                  if k in ('enabled', 'method', 'is_feature_id', 'is_values',
                                           'normalization_factors', 'target_mz', 'target_value')},
             'outputs': written,
+            'external_apis': ('skipped (--no-hazard)' if args.no_hazard else reporter.viz.api_status()),
         }
         manifest_path = write_manifest(
             args.output, args,

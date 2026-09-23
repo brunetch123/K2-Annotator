@@ -16,6 +16,7 @@ hazard data including:
 """
 
 import concurrent.futures
+import os
 import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
@@ -25,6 +26,15 @@ import requests
 # ctxpy does not expose a request timeout (it calls requests.request without
 # one), so every call is run on a worker thread and abandoned after this long.
 CTX_CALL_TIMEOUT = 20.0
+
+# v3.1.1: number of consecutive timeouts / errors after which the client marks
+# the CTX API unavailable and answers every later call with None immediately.
+# Override with K2_API_FAILURE_LIMIT (0 disables the cut-off).
+def _failure_limit():
+    try:
+        return int(os.environ.get("K2_API_FAILURE_LIMIT", "1"))
+    except ValueError:
+        return 1
 
 # Errors that a ctxpy call or the pandas post-processing can raise.  TimeoutError
 # (and concurrent.futures.TimeoutError, its subclass) is an OSError subclass.
@@ -142,6 +152,8 @@ class CTXClient:
         self._ctx_available = False
         self._chem = None
         self._haz = None
+        self.consecutive_failures = 0
+        self.unavailable_reason = None
 
         # Try to import ctx-python
         try:
@@ -175,14 +187,27 @@ class CTXClient:
             return None
         future = _EXECUTOR.submit(fn, *args, **kwargs)
         try:
-            return future.result(timeout=CTX_CALL_TIMEOUT)
+            result = future.result(timeout=CTX_CALL_TIMEOUT)
         except concurrent.futures.TimeoutError:
-            _log(f"CTX {label} timed out after {CTX_CALL_TIMEOUT:.0f}s")
             future.cancel()
+            self._failed(f"{label} timed out after {CTX_CALL_TIMEOUT:.0f}s")
             return None
         except CTX_ERRORS as e:
-            _log(f"CTX {label} failed: {type(e).__name__}: {str(e)[:120]}")
+            self._failed(f"{label} failed: {type(e).__name__}: {str(e)[:120]}")
             return None
+        self.consecutive_failures = 0
+        return result
+
+    def _failed(self, reason):
+        """Count a failure; after the limit, stop calling the API for this run."""
+        self.consecutive_failures += 1
+        _log(f"CTX {reason}")
+        limit = _failure_limit()
+        if limit > 0 and self.consecutive_failures >= limit and self._ctx_available:
+            self._ctx_available = False
+            self.unavailable_reason = reason
+            _log("EPA CompTox API is not responding. Skipping EPA lookups for the "
+                 "remaining compounds and continuing to the report.")
 
     @staticmethod
     def _records(result):

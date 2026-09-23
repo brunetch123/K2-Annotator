@@ -1,4 +1,4 @@
-# K2 Annotator — User Guide
+# K2 Annotator User Guide
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -112,7 +112,7 @@ Download from: https://github.com/mzmine/mzmine/releases
 **Format:** CSV or MSP
 **Templates:** `templates/library_template.csv` and `templates/library_template.msp`
 
-K2 Annotator does not bundle a production spectral library — you must supply your own (e.g. an export of NIST/Wiley, MassBank, or an in-house library). See `templates/library_template.{csv,msp}` for the expected schema and `templates/TEST_DATA_README.md` for a tiny test library used by the validation harness.
+K2 Annotator does not bundle a production spectral library, so you must supply your own (e.g. an export of NIST/Wiley, MassBank, or an in-house library). See `templates/library_template.{csv,msp}` for the expected schema and `templates/TEST_DATA_README.md` for a tiny test library used by the validation harness.
 
 **CSV Format Requirements:**
 - Must have columns: `name`, `formula`, `ri`, `peaks_json`
@@ -204,13 +204,13 @@ Carbon number    RT(min)
 number, cubic-spline interpolation). RI agreement is a mandatory Level-2
 criterion, so K2 refuses to run MZmine data without a calibration file.
 
-**Coverage matters.** Features that elute before the first or after the last
-alkane get an *extrapolated* RI and are flagged `RI_Extrapolated = Yes` in
-every output table; a warning with the count is printed at load. Extrapolated
-RIs are not reliable far from the alkane range — run an alkane series that
-spans all features of interest. `--ri-extrapolation linear` switches from
-cubic-spline to linear (van den Dool) extrapolation outside the range; it does
-not change RIs inside the range.
+Features that elute before the first or after the last alkane receive an
+extrapolated RI and are flagged `RI_Extrapolated = Yes` in every output table,
+and a warning with the count is printed at load. Extrapolated RIs are not
+reliable far from the alkane range, so the alkane series should span all
+features of interest. The `--ri-extrapolation linear` option switches from
+cubic-spline to linear (van den Dool) extrapolation outside the range and does
+not change RIs inside it.
 
 Duplicate carbon numbers, non-increasing retention times and fewer than three
 alkanes are rejected with an explicit message.
@@ -245,7 +245,7 @@ Enables automatic toxicity data retrieval for identified compounds.
    Choose where to start in the pipeline:
    - **Raw Instrument Data**: Full pipeline from vendor raw files
      (Agilent `.D`, Bruker `.d`, Thermo `.raw`, Sciex `.wiff`,
-     Shimadzu `.lcd`, etc. — anything MSConvert can read).
+     Shimadzu `.lcd`, etc., that is, anything MSConvert can read).
      Tested with Agilent `.D` folders; other vendor formats are
      accepted on a best-effort basis.
    - **Instrument Files (.mzML)**: Skip conversion, start with MZmine
@@ -392,7 +392,7 @@ K2 generates results in:
 - `<PROJECT>_<DATE>_feature_summary.csv`: every feature with detection frequency, abundances, `Passed_BFF`, `RI_Extrapolated`
 - `<PROJECT>_<DATE>_match_summary.csv`: compact per-match score table
 - `<PROJECT>_report_<DATE>.pdf`: summary tables plus one page per match with mirror plot and hazard badges
-- `run_manifest.json`: K2 and package versions, SHA-256 of every input file, all resolved options (including `max_lib_peaks` and the RI extrapolation mode), sample classification, library statistics, calibration range and feature/match counts — keep it with the results
+- `run_manifest.json`: K2 and package versions, the SHA-256 hash of every input file, all resolved options (including `max_lib_peaks` and the RI extrapolation mode), the sample classification, library statistics, calibration range, feature and match counts, and the availability of the external hazard services. It should be kept with the results.
 - `pipeline_log.txt` and `mzmine_log.txt` (GUI / pipeline runs)
 
 **Key CSV columns:** `Feature ID`, `RT`, `RI_Exp`, `RI_Extrapolated`, `RI_Lib`, `RI_Err`, `RI_Err%`,
@@ -467,7 +467,7 @@ descending reverse dot product (the first is the "best match").
 ---
 
 **Problem:** `[WinError 362] The cloud file provider is not running` during conversion or MZmine launch
-**Cause:** The `software/` folder (containing MSConvert and/or MZmine) is being kept in OneDrive (or another cloud provider) and the binaries are *cloud-only placeholders* — they look like real files but their contents are not on disk. When the pipeline tries to launch them, Windows asks the cloud client to hydrate them and fails because the client isn't running.
+**Cause:** The `software/` folder (containing MSConvert and/or MZmine) is being kept in OneDrive (or another cloud provider) and the binaries are *cloud-only placeholders*, they look like real files but their contents are not on disk. When the pipeline tries to launch them, Windows asks the cloud client to hydrate them and fails because the client isn't running.
 **Solution (pick one):**
 - Start OneDrive (Start menu → OneDrive) so it can fetch the files on demand. Re-run the pipeline.
 - In File Explorer, right-click the `software/` folder and choose **"Always keep on this device"**. Wait for the green-check icon, then re-run.
@@ -480,12 +480,12 @@ K2 Annotator now also catches this case at startup and refuses to run with an ac
 **Problem:** MZmine fails at the import stage with `java.lang.InternalError: a fault occurred in an unsafe memory access operation` (typically citing `MemoryMapStorage.java`)
 **Cause:** MZmine uses Java NIO memory-mapped files for scratch storage during mzML import. The crash happens when MZmine's mapped pages are pulled out from under the JVM mid-read. On Windows there are three common reasons for that:
 
-1. **Scratch on a cloud-synced path.** OneDrive / Dropbox filter drivers intercept page-level reads and the JVM faults. From v3.0.15 onward K2 Annotator creates MZmine's scratch under `%TEMP%\k2_mzmine_*` automatically — you should see that path near the top of the MZmine stage. If you ever pass `--mzmine-temp` explicitly, do *not* point it at a OneDrive/Dropbox folder.
+1. **Scratch on a cloud-synced path.** OneDrive / Dropbox filter drivers intercept page-level reads and the JVM faults. From v3.0.15 onward K2 Annotator creates MZmine's scratch under `%TEMP%\k2_mzmine_*` automatically, you should see that path near the top of the MZmine stage. If you ever pass `--mzmine-temp` explicitly, do *not* point it at a OneDrive/Dropbox folder.
 2. **Parallel import threads racing on the same rotating scratch file.** When MZmine's `mzmine.tmp` fills up it gets rotated; a concurrent import thread's mmap of the previous file becomes invalid mid-write and the JVM faults inside `Unsafe`. From v3.0.16 onward K2 Annotator serialises the mzML import phase to a single thread by default. The overall `--threads` value is still used for the post-import stages. You can raise the import cap with `--mzmine-import-threads N` if your `mzmine.tmp` rotation doesn't trip on your dataset.
 3. **Antivirus real-time scanning.** Defender / corporate AV products see `mzmine.tmp` being written and grab a read handle for scanning; the JVM's mapped view then disappears or stalls. Exclude the scratch directory (or the whole `%TEMP%` tree) from real-time scanning. This is the single most common cause we see in the wild.
 
 **Other knobs:**
-- `--mzmine-memory {none,all,features,centroids,raw,masses_features}` — forwarded to MZmine 4.x's `-memory` flag (uses MZmine's `KeepInMemory` enum). Default is `none`, which matches MZmine's own fallback (everything in JVM heap). `all` memory-maps everything to disk for the lowest heap pressure (best on machines with a small Windows page file). `masses_features` maps the mass-list and feature layers but keeps raw scans in heap. `features` / `centroids` / `raw` map only the named layer. **Note:** earlier versions of this guide listed `{none,mass,all}`, but `mass` is not a valid `KeepInMemory` value in MZmine 4.x — passing it triggers a non-fatal WARNING in the MZmine log followed by a silent exit-1 a few steps later. If you see `Issue while reading keep in memory option from CLI argument` in the log and the pipeline aborts right after, you are running an old K2 that passes the now-invalid `mass` value.
+- `--mzmine-memory {none,all,features,centroids,raw,masses_features}`, forwarded to MZmine 4.x's `-memory` flag (uses MZmine's `KeepInMemory` enum). Default is `none`, which matches MZmine's own fallback (everything in JVM heap). `all` memory-maps everything to disk for the lowest heap pressure (best on machines with a small Windows page file). `masses_features` maps the mass-list and feature layers but keeps raw scans in heap. `features` / `centroids` / `raw` map only the named layer. **Note:** earlier versions of this guide listed `{none,mass,all}`, but `mass` is not a valid `KeepInMemory` value in MZmine 4.x, passing it triggers a non-fatal WARNING in the MZmine log followed by a silent exit-1 a few steps later. If you see `Issue while reading keep in memory option from CLI argument` in the log and the pipeline aborts right after, you are running an old K2 that passes the now-invalid `mass` value.
 
 ---
 
@@ -498,20 +498,20 @@ K2 Annotator now also catches this case at startup and refuses to run with an ac
 4. Tick **"Automatically manage paging file size for all drives"**.
 5. Click **OK**, restart Windows when prompted.
 
-**Fallback (if you can't change the page file):** Run with `--mzmine-memory all` (memory-map everything to disk, lowest heap pressure) or `--mzmine-memory masses_features` (map mass lists + features, keep raw scans in heap). The default `none` keeps everything in heap — fine on machines with plenty of RAM + a healthy page file, but the first thing to change if you hit `paging file is too small`. If switching still fails, you can edit `mzmine.vmoptions` in your MZmine install folder and set a smaller heap, e.g. `-Xmx2g`. The pipeline does not control MZmine's heap size directly.
+**Fallback (if you can't change the page file):** Run with `--mzmine-memory all` (memory-map everything to disk, lowest heap pressure) or `--mzmine-memory masses_features` (map mass lists + features, keep raw scans in heap). The default `none` keeps everything in heap, fine on machines with plenty of RAM + a healthy page file, but the first thing to change if you hit `paging file is too small`. If switching still fails, you can edit `mzmine.vmoptions` in your MZmine install folder and set a smaller heap, e.g. `-Xmx2g`. The pipeline does not control MZmine's heap size directly.
 - If MZmine still fails on this dataset after the above, copy the **`MZmine command: ...`** line printed by the pipeline and run it manually in a terminal. If it fails there too, the issue is in MZmine's environment, not K2 Annotator.
 
 ---
 
 **Problem:** MSConvert appears stuck for hours during the "writing to mzML" stage
 **Cause:** Your output folder is on a network share (Z:, an SMB mount, a VPN-mounted volume, etc.). MSConvert writes the `.mzML` output incrementally with frequent fsyncs; doing that against a high-latency network filesystem can stretch a minute of conversion into many hours of wall time, because each write round-trips over the network.
-**Solution:** From v3.0.13 onward K2 Annotator stages each conversion through a fast local temp directory (default `%TEMP%\k2_msconvert_*`) and copies the finished `.mzML` to the requested output folder in one shot. This is on by default — you should see a `Staging directory:` line at the top of the conversion stage. If you ever want to skip the staging step (e.g. because your output is already on a fast local SSD and you want to avoid the extra copy), pass `--no-stage-locally` to `gcms_pipeline.py`.
+**Solution:** From v3.0.13 onward K2 Annotator stages each conversion through a fast local temp directory (default `%TEMP%\k2_msconvert_*`) and copies the finished `.mzML` to the requested output folder in one shot. This is on by default, you should see a `Staging directory:` line at the top of the conversion stage. If you ever want to skip the staging step (e.g. because your output is already on a fast local SSD and you want to avoid the extra copy), pass `--no-stage-locally` to `gcms_pipeline.py`.
 
-If staging is enabled and conversion is *still* slow, the bottleneck is now on the **read** side — MSConvert reading the raw `.D` folder from the network share. The simplest remedy is to copy the raw folder(s) to a local drive first and run the pipeline against that local copy.
+If staging is enabled and conversion is *still* slow, the bottleneck is now on the **read** side, MSConvert reading the raw `.D` folder from the network share. The simplest remedy is to copy the raw folder(s) to a local drive first and run the pipeline against that local copy.
 
 ---
 
-### New error messages in v3.1.0 (and what to do)
+### Error messages introduced in v3.1.0
 
 | Message | Cause | Fix |
 |---|---|---|
@@ -522,7 +522,8 @@ If staging is enabled and conversion is *still* slow, the bottleneck is now on t
 | `No quantification columns found in the MZmine CSV` | Export lacks `Peak area` / `Peak height` / `datafile:...:area` columns | Re-export the aligned feature list with areas |
 | `'row ID' is not an integer` | Wrong file passed as the quant table | Check the file |
 | `Library ... yielded no usable entries` | No entry had both an RI and a peak list | Check the RI field spelling and the peak-line format (see templates/TEST_DATA_README.md) |
-| `[OK] Analysis complete - NO Level 2 matches.` (exit code 2) | Everything ran; nothing passed | Look at `*_feature_summary.csv` (`Passed_BFF`, `RI_Extrapolated`) and the diagnostic trace (`K2_DIAG_MATCHING_CSV=path`) |
+| `[OK] Analysis complete - NO Level 2 matches.` (exit code 2) | The run completed and no candidate passed | Check `Passed_BFF` and `RI_Extrapolated` in `*_feature_summary.csv`, and the per-candidate trace written when `K2_DIAG_MATCHING_CSV` is set |
+| `[API] pubchem.ncbi.nlm.nih.gov is not responding ... Skipping all further requests` | The hazard service timed out or refused the connection | Nothing to do; the run continues to the report and the remaining compounds read `Skipped (API unavailable)`. Use `--no-hazard` to skip the lookups from the start, or set `K2_API_FAILURE_LIMIT` to allow more failures before giving up |
 | `N of M features elute outside the alkane calibration range` | Alkane series too short | Extend the alkane series; treat flagged RIs with caution |
 
 ### Getting Help
@@ -814,36 +815,16 @@ Brunet, C. (2026). K2 Annotator: an open-source GC-MS suspect screening pipeline
 
 ---
 
-## Level 2 Matching Criteria (v3.1.0)
+## Level 2 Matching Criteria (v3.1.x)
 
-The full, citable description of every computation is in
-[docs/SCORING_METHODS.md](docs/SCORING_METHODS.md). Every candidate that earns
-a Level-2 annotation must clear all of:
+Each computation is described in [docs/SCORING_METHODS.md](docs/SCORING_METHODS.md) in a form suitable for a methods section. In brief, a candidate receives a Level 2 annotation only when it satisfies all of the following.
 
-1. **Blank Feature Filter** — max abundance in any (non-reference) sample must
-   strictly exceed `c × (mean_blank + 3·SD_blank)`, c = 5 by default
-   (`--bff-c-factor`). A run with no blank column is refused unless
-   `--allow-no-blanks`. `--bff-mode adjusted` (MAD-based) is an optional mode
-   **outside** the Koelmel et al. 2022 framework.
-2. **Retention index** — |ΔRI| ≤ 50 **and** ≤ 1.5 % of the feature RI. RI comes
-   from the alkane calibration; extrapolated RIs are flagged.
-3. **Spectral similarity** — reverse dot > 600 **and** forward dot > 500
-   (unit-mass bins, weights √intensity × m/z, squared cosine × 1000; the
-   reverse dot ignores feature peaks absent from the library entry). The
-   library entry is trimmed to its 20 most intense peaks at load
-   (`--max-lib-peaks`, recorded in the manifest).
-4. **Exact-mass evidence** — for exact-mass library entries (metadata flag, or
-   ≥ 2 peaks with ≥ 3 decimal digits, one in the top 3): the dot products are
-   recomputed with 10 ppm peak pairing and must again clear 600/500
-   (`HR_RevDot`/`HR_FwdDot`). For all other entries: RHRMF > 75, computed
-   after Kwiecien et al. 2015 — ±10 ppm about the measured cation m/z
-   (electron mass subtracted), sub-formulas of the candidate formula,
-   isotopologue variants for ¹³C/³⁷Cl/⁸¹Br/³⁴S/³⁰Si, TIC-weighted score;
-   labelled formulas (D, ¹³C) are supported.
+1. **Blank feature filter.** The maximum abundance of the feature in any non-reference sample must exceed `c × (mean_blank + 3·SD_blank)`, with c = 5 by default (`--bff-c-factor`). A run in which no blank column is identified is refused unless `--allow-no-blanks` is given. The `--bff-mode adjusted` option (a median and MAD based rule) is not part of the Koelmel et al. (2022) framework and is off by default.
+2. **Retention index.** |ΔRI| must be at most 50 and at most 1.5% of the feature RI. RIs come from the alkane calibration, and extrapolated values are flagged.
+3. **Spectral similarity.** The reverse dot product must exceed 600 and the forward dot product 500 (unit-mass bins, weights of √intensity × m/z, squared cosine scaled to 1000). The reverse dot product ignores feature peaks that are absent from the library entry. Library entries are trimmed to their 20 most intense peaks at load (`--max-lib-peaks`, recorded in the manifest).
+4. **Exact-mass evidence.** For exact-mass library entries (identified by a metadata flag, or by at least two peaks with three or more decimal digits, one of them among the three most intense) the dot products are recomputed with 10 ppm peak pairing and must again exceed 600 and 500 (`HR_RevDot` and `HR_FwdDot`). For all other entries the RHRMF must exceed 75. The RHRMF follows Kwiecien et al. (2015): a ±10 ppm window about the measured cation m/z (electron mass subtracted), sub-formulas of the candidate formula, isotopologue variants for 13C, 37Cl, 81Br, 34S, and 30Si, and a total-ion-current weighted score. Labeled formulas (D, 13C) are supported.
 
-Sample classification comes from the GUI table (`--grouping` on the command
-line); samples typed *Reference* are excluded from the BFF maximum and from
-the summary statistics.
+Sample classification comes from the GUI table (`--grouping` on the command line). Samples typed as *Reference* are excluded from the blank-filter maximum and from the summary statistics.
 
 ---
 

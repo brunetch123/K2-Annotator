@@ -2,138 +2,53 @@
 
 All notable changes to **K2 Annotator** (formerly K2 Analyzer / K2 GC-MS Suspect Screening Pipeline) will be documented in this file.
 
-## [3.1.0] - 2026-09-23
+## [3.1.1] - 2026-09-23
 
-Release produced from an independent scientific and software review of v3.0.21
-against the manuscripts the pipeline implements (Koelmel et al. 2022, Brunet et
-al. NYCSS manuscript + SI, Kwiecien et al. 2015). Finding IDs (S-* scientific,
-D-* design) refer to that review; every finding is pinned by a test in the new
-`tests/` package (`python -m pytest`). **No Level-2 threshold or window was
-changed.** Several fixes make the code compute the written criteria correctly
-and therefore change scores; see "Migration".
-
-### Fixed — scoring (changes results)
-- **RHRMF now subtracts the electron mass (S-RHRMF-1).** `rhrmf.py` compared
-  measured ion m/z against *neutral* sub-formula masses. Kwiecien 2015 (SI)
-  subtracts one electron mass before matching. The omission shifted the
-  ±10 ppm window by 6 ppm at m/z 91 and 11 ppm at m/z 51, rejecting perfectly
-  measured light fragments and making the effective tolerance asymmetric
-  (toluene at −5 ppm mass error scored 0, at +5 ppm scored 100). The window is
-  now symmetric about the measured cation m/z. RHRMF values rise for spectra
-  rich in fragments below ~m/z 150; the "unexplained biphenyl zeros" noted in
-  the v3.0.20 entry are a symptom of this defect.
-- **Isotopically labelled formulas work in RHRMF (S-RHRMF-2).** `D`/`2H`,
-  `13C` and other isotope symbols emitted by molmass were silently dropped, so
-  every labelled surrogate scored RHRMF 0 against a low-resolution entry.
-  Atom masses now come from molmass' isotope table (also fixing a ~0.8 ppm
-  bias from the old 5-decimal table, S-DOC-1); unknown atoms trigger a
-  warning at library load instead of silence.
-- **Exact-mass library detector decides by stored precision (S-HR-1).** An
-  entry is HR when its metadata says so (`resolution`/`hires` = high) or when
-  ≥2 peaks carry ≥3 decimal digits with ≥1 in the top-3 by intensity. The
-  v3.0.21 mass-defect rule classified exact-mass benzene, chlorobenzene and
-  dichlorobiphenyl entries as low-resolution and discarded real C27–C28 alkyl
-  fragments as z=2 artefacts. The old rule remains as
-  `is_library_high_res_v3021()` for audit.
-- **Surrogate recoveries were IS-normalised twice (S-SUR-1).** With IS
-  normalisation on, `SurrogateAnalyzer` multiplied already-normalised
-  abundances by the factor again (factor² → a true 100 % recovery reported as
-  200 %/400 %). The surrogate matcher also now evaluates the 1.5 % RI rule
-  relative to the feature RI like the screening engine (S-SUR-2).
-- **Unit-mass binning rounds half up** (76.5 → 77 and 77.5 → 78; previously
-  banker's rounding gave 76 and 78) (S-DOT-2).
-
-### Fixed — correctness
-- **`--grouping` is live (D-1).** The GUI's per-sample Blank/Sample/Reference
-  table was written to JSON and forwarded, but `cli.py` never used it; BFF
-  fell back to the blank-identifier substring. Reference samples are derived
-  from the grouping as well.
-- **Zero-of-anything is an error (D-2, D-5, S-BFF-1, S-RI-2).** No
-  quantification columns, no features, no sample columns, no blank columns
-  (unless `--allow-no-blanks`), unknown names in the grouping, a missing
-  calibration file, or MZmine data without a calibration file now stop the
-  run with a clear message instead of an empty "successful" result. The
-  final blank/sample classification is printed.
-- **One tolerant MSP reader (`src/msp_reader.py`) for every consumer (D-3).**
-  Handles UTF-8 BOM, CRLF, any key case, `Retention_index:`/`NUM_PEAKS:`
-  spellings, NIST `41 59; 43 999;` and `(41 59)` peak lines, records without
-  blank-line separators, and `Num Peaks` mismatches (warned, never
-  truncated). Previously a NIST export could load zero compounds silently.
-  MZmine quant files with `Peak height` or `datafile:X.mzML:area` columns are
-  accepted; sample names are normalised (extension / suffix stripped) so GUI
-  file stems, `--reference-samples` and column headers agree.
-- **RI calibration loader validates its input (D-4):** header-less tables
-  no longer lose their first alkane; comma/semicolon/space delimiters
-  accepted; duplicate carbon numbers and non-monotonic RTs are rejected with
-  explicit messages.
-- **IS normalisation is idempotent and validated (D-10):** factors are
-  applied to the parsed (`raw_abundances`) values, string IS values fail
-  with a message, the IS MSP goes through the shared reader, auto-detected IS
-  areas are reported in `IS_Area_*` columns.
-- **Reports (D-9):** `Instrument`/`Comments` columns read the template keys
-  `instrument`/`comments`; reference samples are excluded from feature-summary
-  statistics (they were excluded from the BFF but not from the summaries);
-  `Mean_Detected_Abundance` added; hazard lookups happen once per CAS; mirror
-  plots are rendered only for the PDF; one bad page no longer loses the whole
-  PDF (`c.save()` in `finally`); `temp_assets/` is removed unless
-  `--keep-assets`; surrogate recovery of exactly 0 renders as 0.
-- **External APIs (D-8):** one `requests.Session` with timeouts, retries and
-  a PubChem rate limit; per-CAS on-disk cache (`~/.k2/cache/`); the guessed
-  `EpaClient` endpoint (which returned an all-zero matrix and suppressed the
-  PubChem fallback whenever an API key was present) is removed; DTXSIDs come
-  from `ctxpy`; `pubchempy` dependency dropped.
-- **GUI / pipeline (D-7):** the Thread Count setting is honoured (import
-  serialisation is now an explicit checkbox); the PyInstaller build runs the
-  pipeline in-process instead of re-launching the GUI; `max_lib_peaks`,
-  `ri_extrapolation` and `allow_no_blanks` are exposed in the Analysis
-  screen; project/preset state no longer leaks between projects; the EPA API
-  key travels via `K2_EPA_API_KEY` and is stored only in
-  `~/.k2/credentials.json`, never in `.K2` files or command echoes; Tk widgets
-  are updated on the main thread; Cancel kills the whole process tree;
-  `results/<name>` is never overwritten (`_2`, `_3`, …); `--name` is sanitised
-  and used; dead code (`main.py`, `InternalStandardScreen`, `msdial_parser.py`)
-  removed.
+### Fixed
+- **Runs no longer stall on an unresponsive hazard API.** Every hazard lookup was retried in full (up to 20 s per CTX call, and up to four attempts per PubChem request), so a run with several hundred matches could spend hours waiting on a service that was down. Each external host now has a failure counter. After the first transport failure (timeout, connection error, or exhausted retries) the host is marked unavailable for the rest of the run, further requests return immediately, and the remaining compounds are reported as `Skipped (API unavailable)` while the run proceeds directly to the report. The same rule applies to the ctx-python client for EPA CompTox. HTTP 4xx responses are treated as answers, not failures, and do not trip the cut-off. The limit can be raised with the environment variable `K2_API_FAILURE_LIMIT` (0 disables the cut-off).
+- The availability of each service at the end of the run is recorded in `run_manifest.json` under `external_apis`.
 
 ### Added
-- **`RI_Extrapolated` column** in every table and a load-time warning: RIs
-  for features outside the alkane range are flagged (S-RI-1).
-  `--ri-extrapolation {spline,linear}` selects how they are derived
-  (default `spline` = v3.0.x behaviour; `linear` = van den Dool from the
-  terminal alkane pair). `RICalibrator.rt_range` / `is_in_range()`.
-- **`run_manifest.json`** in every results folder (D-6): K2 and package
-  versions, SHA-256 of every input, resolved options (including
-  `max_lib_peaks`), sample classification, library statistics, calibration
-  range and feature/match counts. `pipeline_log.txt` and the untruncated
-  `mzmine_log.txt` are saved alongside.
-- **`HR_RevDot` / `HR_FwdDot` columns**; `RHRMF` reads `N/A` for exact-mass
-  entries instead of the sentinel `100.0` (S-HR-2).
-- **CLI exit codes:** 0 matches found, 2 completed with no matches (summaries
-  and manifest still written), 1 error. `--csv-only`/`--pdf-only` are mutually
-  exclusive; `--version`.
-- **`tests/`**: 99 pytest tests with a formula-derived synthetic dataset
-  (`tests/synth/make_dataset.py`) covering every criterion, edge cases and the
-  end-to-end CLI. `templates/ri_calibration_template.txt` ships so the
-  template data runs out of the box.
-- **`docs/SCORING_METHODS.md`**: the exact computations (weights, trimming,
-  detector rule, RHRMF details, extrapolation) in SI-ready form.
+- `--no-hazard` skips all EPA CompTox and PubChem lookups, including structure images, for users who do not need the hazard columns or who know the services are unavailable.
+
+---
+
+## [3.1.0] - 2026-09-23
+
+This release follows an independent review of v3.0.21 against the three papers the pipeline implements (Koelmel et al. 2022, Kwiecien et al. 2015, and the NYCSS manuscript with its supporting information). The review identifiers used below (S-* for scientific findings, D-* for software findings) refer to that report, and each finding is now covered by a test in the `tests/` package (`python -m pytest`, 99 tests). It should be noted that none of the Level 2 thresholds or windows were changed. Several of the fixes correct how a written criterion was being computed, however, and consequently they change scores. The "Migration" notes at the end of this entry describe which results are affected.
+
+### Fixed (scoring)
+- **Electron mass in the RHRMF (S-RHRMF-1).** The RHRMF compared measured ion m/z values against neutral sub-formula masses, whereas Kwiecien et al. subtract one electron mass before matching. The omission displaced the ±10 ppm window by 6 ppm at m/z 91 and by 11 ppm at m/z 51, so that perfectly measured light fragments were rejected and the effective tolerance was asymmetric (a toluene spectrum with a −5 ppm mass-axis error scored 0 while the same spectrum at +5 ppm scored 100). The window is now centered on the measured cation. RHRMF values increase for spectra dominated by fragments below roughly m/z 150, and the biphenyl features that scored 0 in the v3.0.20 diagnostic are a symptom of this defect.
+- **Isotopically labeled formulas (S-RHRMF-2).** Deuterium and 13C symbols produced by molmass were dropped from the parent formula, so every labeled surrogate scored 0 against a low-resolution library entry. Atom masses are now taken from the molmass isotope table (which also removes a bias of roughly 0.8 ppm introduced by the previous five-decimal mass table), and formulas containing unrecognized atoms produce a warning at library load.
+- **Exact-mass library detection (S-HR-1).** An entry is treated as exact-mass when its metadata says so (`resolution` or `hires` set to high) or when at least two of its peaks carry three or more decimal digits and one of those is among the three most intense. The previous rule, which was based on the size of the mass defect, classified exact-mass benzene, chlorobenzene, and dichlorobiphenyl entries as low-resolution and treated real C27 to C28 alkyl fragments as doubly charged artifacts. The previous rule is retained as `is_library_high_res_v3021()` for comparison.
+- **Surrogate recoveries (S-SUR-1, S-SUR-2).** With internal-standard normalization enabled, the surrogate analyzer multiplied abundances that had already been normalized by the same factor a second time, so that a true recovery of 100% in a sample with a factor of 2 was reported as 200%. The surrogate matcher also now evaluates the 1.5% retention-index rule relative to the feature RI, as the screening engine does.
+- **Unit-mass binning** rounds half-integer m/z values up consistently (76.5 → 77, 77.5 → 78) rather than using Python's round-to-even (S-DOT-2).
+
+### Fixed (software)
+- **Sample classification (D-1).** The per-sample Blank/Sample/Reference table written by the GUI was passed to `cli.py` as `--grouping` but never read, so the blank feature filter fell back to the blank-identifier substring regardless of what the user had entered. The grouping is now applied, and reference samples are taken from it.
+- **Silent empty runs (D-2, D-5, S-BFF-1, S-RI-2).** A run with no quantification columns, no features, no sample columns, no blank columns, a missing calibration file, or MZmine data without a calibration file previously completed "successfully" with no matches. Each of these conditions now stops the run with a message that names the problem, and the final blank/sample classification is printed. `--allow-no-blanks` permits a run without blanks for the rare case in which that is intended.
+- **One MSP reader (D-3).** Five separate MSP parsers, each accepting a different subset of the format, are replaced by `src/msp_reader.py`. It accepts a UTF-8 byte-order mark, CRLF line endings, header keys in any case, the `Retention_index:` and `NUM_PEAKS:` spellings, NIST peak lines of the form `41 59; 43 999;` and `(41 59)`, and records that are not separated by a blank line. A `Num Peaks` count that disagrees with the peak list produces a warning rather than a truncated spectrum. MZmine feature tables with `Peak height` or `datafile:X.mzML:area` columns are accepted, and sample names are normalized so that GUI file stems, `--reference-samples`, and column headers refer to the same column.
+- **Calibration input (D-4).** A calibration table without a header no longer loses its first alkane, comma and semicolon delimiters are accepted, and duplicate carbon numbers or non-increasing retention times are rejected with an explicit message.
+- **Internal-standard normalization (D-10)** is computed from the parsed abundances each time it runs, so repeating it within a session no longer scales abundances twice. Non-numeric IS values fail with a message, and the IS areas actually used are written to the `IS_Area_*` columns for the automatic methods.
+- **Reports (D-9).** The `Instrument` and `Comments` columns now read the `instrument` and `comments` keys used by the templates. Reference samples are excluded from the feature-summary statistics (they were already excluded from the blank feature filter). A `Mean_Detected_Abundance` column is added. Hazard lookups are made once per CAS number, mirror plots are rendered only for the PDF, a single failed page no longer loses the whole PDF, and `temp_assets/` is removed at the end of a run unless `--keep-assets` is given.
+- **External services (D-8).** All HTTP traffic goes through one session with timeouts, retries, and a rate limit for PubChem, and results are cached per CAS number in `~/.k2/cache/`. The guessed `EpaClient` endpoint, which returned an all-zero hazard matrix whenever an API key was present and thereby suppressed the PubChem fallback, is removed. DTXSIDs are resolved through ctx-python, and the pubchempy dependency is no longer needed.
+- **GUI and pipeline (D-7).** The thread-count setting is honored (import serialization is now an explicit checkbox); the PyInstaller build runs the pipeline in-process rather than relaunching the GUI; `max_lib_peaks`, `ri_extrapolation`, and `allow_no_blanks` are exposed in the Analysis screen; project and preset state no longer carry over between projects; the EPA API key is passed through the `K2_EPA_API_KEY` environment variable and stored only in `~/.k2/credentials.json`; Tk widgets are updated from the main thread; Cancel stops MSConvert and MZmine as well as the Python process; an existing `results/<name>` folder is never overwritten (`_2`, `_3`, ... are appended); and the unused `main.py`, `InternalStandardScreen`, and `msdial_parser.py` are removed.
+
+### Added
+- **Retention-index provenance (S-RI-1).** Features that elute outside the alkane range are flagged `RI_Extrapolated = Yes` in every table, and a warning with the count is printed at load. `--ri-extrapolation {spline,linear}` selects how those RIs are derived. The default (`spline`) reproduces the previous behavior exactly, so published RIs are unchanged, while `linear` applies the van den Dool convention from the terminal alkane pair.
+- **Run manifest (D-6).** Every run writes `run_manifest.json` with the K2 and package versions, the SHA-256 of every input file, all resolved options (including `max_lib_peaks`), the sample classification, library statistics, the calibration range, and feature and match counts. The pipeline log and the untruncated MZmine log are saved alongside it.
+- **`HR_RevDot` and `HR_FwdDot` columns.** Exact-mass library matches report the 10 ppm peak-paired dot products they were gated on, and `RHRMF` reads `N/A` for them instead of the placeholder value 100.0 (S-HR-2).
+- **Exit codes.** `cli.py` returns 0 when at least one match is found, 2 when the run completes with no matches (the summary tables and manifest are still written), and 1 on error. `--csv-only` and `--pdf-only` are mutually exclusive, and `--version` is available.
+- **Tests and templates.** The `tests/` package builds a synthetic dataset from fragment formulas and checks every criterion, the parsers, and the command-line interface end to end. A `templates/ri_calibration_template.txt` alkane table is included so that the template data runs as shipped.
+- **`docs/SCORING_METHODS.md`** describes each computation (weights, trimming, the exact-mass detector, the RHRMF, and extrapolation) in a form suitable for a methods section.
 
 ### Documentation
-- Dot-product weighting (m/z¹ · I^0.5, squared cosine × 1000), the top-20
-  library trim and the HR-aware re-scoring step are now stated explicitly;
-  they were undocumented (S-DOT-1, S-TRIM-1). The `adjusted` BFF mode is
-  labelled as outside the Koelmel framework. The IS factor is documented as
-  max(IS)/IS (the guide said median).
+- The dot-product weighting (m/z¹ × I^0.5, squared cosine scaled to 1000), the trimming of library spectra to their 20 most intense peaks, and the 10 ppm re-scoring of exact-mass entries were previously undocumented and are now stated (S-DOT-1, S-TRIM-1). The `adjusted` blank-filter mode is labeled as an option outside the Koelmel framework, and the IS factor is documented as max(IS)/IS rather than the median.
 
 ### Migration
-- Re-run analyses whose RHRMF values, HR classification or surrogate
-  recoveries matter: RHRMF scores rise for light-fragment spectra, some
-  candidates rejected by v3.0.x now pass, exact-mass aromatic/halogenated
-  entries take the HR path, and IS-normalised recoveries are lower by the IS
-  factor.
-- MZmine runs now require `--ri-cal`; runs with no blank column require
-  `--allow-no-blanks`.
-- `epa_client.py`, `msdial_parser.py` and `main.py` are gone; `pubchempy` is
-  no longer required.
+- Analyses in which RHRMF values, exact-mass classification, or surrogate recoveries matter should be re-run. RHRMF scores increase for light-fragment spectra, some candidates rejected by v3.0.x now pass, exact-mass aromatic and halogenated entries take the exact-mass path, and IS-normalized recoveries are lower by the IS factor.
+- MZmine runs require `--ri-cal`, and runs without a blank column require `--allow-no-blanks`.
+- `epa_client.py`, `msdial_parser.py`, and `main.py` are removed, and `pubchempy` is no longer a dependency.
 
 ---
 

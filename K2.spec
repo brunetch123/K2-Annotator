@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
 K2 Annotator - PyInstaller Build Specification
-Version 3.1.0
+Version 3.1.1
 
 Build with: pyinstaller K2.spec --clean
 Output: dist/K2/K2.exe (folder mode) or dist/K2.exe (onefile mode)

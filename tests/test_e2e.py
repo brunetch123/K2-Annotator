@@ -100,7 +100,8 @@ def test_run_manifest_written(csv_run):
     for key in ('k2_version', 'timestamp', 'python', 'packages', 'args', 'inputs',
                 'sample_classification', 'library', 'ri_calibration', 'counts', 'outputs'):
         assert key in m, key
-    assert m['k2_version'] == '3.1.0'
+    from src.version import __version__
+    assert m['k2_version'] == __version__
     assert m['inputs']['library']['sha256'] and m['inputs']['quant']['size'] > 0
     assert m['sample_classification']['blanks'] == ['FieldBlank_01', 'FieldBlank_02']
     assert m['counts']['features'] == len(truth['features'])

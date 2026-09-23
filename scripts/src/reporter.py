@@ -7,7 +7,8 @@ from src.structure_helper import StructureHelper  # v2.7.0: replaced Visualizer
 
 class ReportGenerator:
     def __init__(self, results, features, output_dir="results", api_key=None, sample_columns=None, is_config=None,
-                 surrogate_analyzer=None, blank_columns=None, reference_samples=None):
+                 surrogate_analyzer=None, blank_columns=None, reference_samples=None,
+                 hazard_lookups=True):
         self.results = results
         self.feature_map = {f.id: f for f in features}
         self.output_dir = output_dir
@@ -26,6 +27,8 @@ class ReportGenerator:
                                     if c not in self.blank_columns
                                     and c not in self.reference_samples]
         self._hazard_cache = {}
+        # v3.1.1: --no-hazard skips every EPA/PubChem lookup up front.
+        self.hazard_lookups = bool(hazard_lookups)
 
         # Initialize structure helper for PDF generation (v2.7.0)
         temp_assets_dir = os.path.join(self.output_dir, "temp_assets")
@@ -57,6 +60,9 @@ class ReportGenerator:
         """Hazard lookup, once per CAS per report run."""
         if cas in self._hazard_cache:
             return self._hazard_cache[cas]
+        if not self.hazard_lookups:
+            return ({}, ["Skipped (--no-hazard)"],
+                    f"https://comptox.epa.gov/dashboard/search/details?search={cas}")
         try:
             res = self.viz.get_hazard_matrix(inchikey, name, cas)
         except Exception as e:  # StructureHelper should never raise, belt and braces
@@ -318,7 +324,7 @@ class ReportGenerator:
                     # Structure uses sanitized name (same compound = same structure, OK to share)
                     sanitized_name = self._sanitize_filename(comp.name)
                     lib_idx = getattr(comp, 'library_index', None) or 0
-                    struct_path = self.viz.get_structure_image(
+                    struct_path = None if not self.hazard_lookups else self.viz.get_structure_image(
                         meta.get('inchikey'), comp.name, f"struct_{feat_id}_{sanitized_name}.png"
                     )
                     if struct_path:

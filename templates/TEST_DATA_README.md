@@ -24,9 +24,9 @@ Expected: features 1, 2 and 3 each receive one Level-2 match (n-Decane,
 is removed by the blank feature filter. Exit code 0. A `run_manifest.json`,
 the per-match CSV, and the feature/match summary CSVs are written.
 
-All exact-mass values in these files are **cation** m/z values (monoisotopic
-mass minus one electron), as a mass spectrometer reports them. (Before
-v3.1.0 the templates held neutral masses.)
+All exact-mass values in these files are cation m/z values (monoisotopic mass
+minus one electron), as a mass spectrometer reports them. It should be noted
+that the templates shipped with versions before 3.1.0 held neutral masses.
 
 ## Test features
 

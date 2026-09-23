@@ -1,6 +1,6 @@
 ================================================================================
 K2 Annotator
-Version 3.1.0
+Version 3.1.1
 ================================================================================
 
 INSTALLATION INSTRUCTIONS
@@ -103,8 +103,13 @@ The EPA CompTox API key enables hazard-data enrichment. Since version
   the key in the Analysis Parameters screen, to forget it.
 
 
-WHAT'S NEW IN 3.1.0 (LAUNCH / PIPELINE)
+WHAT'S NEW IN 3.1.x (LAUNCH / PIPELINE)
 =======================================
+
+- 3.1.1: if the EPA CompTox or PubChem service stops responding, the
+  remaining hazard lookups are skipped and the run proceeds directly to
+  the report instead of waiting on a timeout for every compound. The
+  --no-hazard option skips the lookups entirely.
 
 - Results are never overwritten: a second run with the same project
   name goes to results\<name>_2, _3, ...
@@ -113,10 +118,9 @@ WHAT'S NEW IN 3.1.0 (LAUNCH / PIPELINE)
   into its results folder.
 - Zero-match runs finish with a warning (exit code 2) and still write
   the feature summaries.
-- "Thread Count" in the MZmine screen is now honoured; tick
-  "Serialise MZmine import (1 thread)" to restore the old
-  single-threaded import on machines that hit the unsafe-memory-access
-  crash.
+- The "Thread Count" setting in the MZmine screen is now applied. Tick
+  "Serialise MZmine import (1 thread)" to restore the single-threaded
+  import on machines that hit the unsafe-memory-access crash.
 - New analysis options: max library peaks, RI extrapolation mode
   (spline/linear) and "allow runs with no blank samples".
 - K2.bat prefers the "py -3" launcher (avoids the Microsoft Store
@@ -195,7 +199,7 @@ Solution:
   than 1.5x free.
 - Free space on the scratch volume (defaults to %TEMP%), or pass
   --mzmine-temp pointing at a roomier local drive. Network shares
-  (Z:, SMB mounts) are NOT supported as scratch — Java NIO
+  (Z:, SMB mounts) are NOT supported as scratch, because Java NIO
   memory-mapping fails on them.
 
 

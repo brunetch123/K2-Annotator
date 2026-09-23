@@ -4,7 +4,7 @@
   <img src="K2Logo.png" alt="K2 Annotator logo" width="420">
 </p>
 
-**Open-source GC-MS data processing and Level 2 compound identification.** (v3.1.0)
+**Open-source GC-MS data processing and Level 2 compound identification.** (v3.1.1)
 
 ## Overview
 
@@ -12,7 +12,7 @@ K2 Annotator is an open-source pipeline for non-targeted GC-MS suspect screening
 
 - **Raw file conversion** via ProteoWizard MSConvert
 - **Feature detection and deconvolution** via MZmine
-- **Spectral library matching** with Retention Index, Kwiecien-style RHRMF (10 ppm about the cation m/z, isotopologue substitution, TIC-weighted scoring), and a 10 ppm peak-paired dot product for exact-mass library entries. The exact computations are documented in [docs/SCORING_METHODS.md](docs/SCORING_METHODS.md).
+- **Spectral library matching** using retention index, forward and reverse dot products, a reverse high-resolution mass filter after Kwiecien et al. (2015) for low-resolution library entries, and a 10 ppm peak-paired dot product for exact-mass entries. Each computation is described in [docs/SCORING_METHODS.md](docs/SCORING_METHODS.md).
 - **Hazard screening** via EPA CompTox APIs
 - **Surrogate standard recovery** calculation (v3.0.0+)
 
@@ -44,8 +44,8 @@ K2 Annotator is an open-source pipeline for non-targeted GC-MS suspect screening
    pip install -r requirements.txt
    ```
 3. Install external tools (required for full pipeline):
-   - [ProteoWizard MSConvert](https://proteowizard.sourceforge.io/) — for raw file conversion (vendor raw → mzML)
-   - [MZmine](https://mzmine.github.io/) (3.x or 4.x) — for feature detection and deconvolution
+   - [ProteoWizard MSConvert](https://proteowizard.sourceforge.io/) for raw file conversion (vendor raw to mzML)
+   - [MZmine](https://mzmine.github.io/) (3.x or 4.x) for feature detection and deconvolution
 4. Provide a spectral library in CSV or MSP format (see **Library Formats** below)
 
 ### Running the GUI
@@ -66,11 +66,14 @@ python scripts/cli.py --quant data.csv --msp spectra.msp --library library.msp \
                       --ri-cal alkanes.txt --grouping sample_grouping.json --output results/
 ```
 
-`--ri-cal` is required for MZmine data (RI is a mandatory Level-2 criterion).
-`--grouping` takes the per-sample Blank/Sample/Reference table the GUI writes;
-without it, blanks are recognised by the `--blank-id` substring. Every run
-writes `run_manifest.json` (versions, input hashes, resolved options). Exit
-code 0 = matches found, 2 = completed with no matches, 1 = error.
+MZmine data require an alkane calibration table (`--ri-cal`), given that the
+retention index is a mandatory Level 2 criterion. The `--grouping` option takes
+the per-sample Blank/Sample/Reference table written by the GUI, and without it
+blanks are recognized by the `--blank-id` substring. Every run writes a
+`run_manifest.json` recording the software versions, input file hashes, and
+resolved options. The exit code is 0 when at least one match is found, 2 when
+the run completes with no matches, and 1 on error. `--no-hazard` skips the
+EPA CompTox and PubChem lookups.
 
 ### Running the tests
 
@@ -78,9 +81,9 @@ code 0 = matches found, 2 = completed with no matches, 1 = error.
 python -m pytest
 ```
 
-The `tests/` package (99 tests) builds a synthetic dataset from fragment
-formulas and checks every Level-2 criterion, the input parsers and the
-end-to-end CLI. Run it after changing anything under `scripts/src/`.
+The `tests/` package builds a synthetic dataset from fragment formulas and
+checks each Level 2 criterion, the input parsers, and the command-line
+interface end to end. It should be run after any change under `scripts/src/`.
 
 ## External Dependencies
 
@@ -129,10 +132,11 @@ Num Peaks: 2
 
 ## Documentation
 
-- **[K2_USER_GUIDE.md](K2_USER_GUIDE.md)** — Complete user documentation
-- **[QUICK_START.md](QUICK_START.md)** — Quick start guide
-- **[INSTALLATION.txt](INSTALLATION.txt)** — Detailed installation instructions
-- **[CHANGELOG.md](CHANGELOG.md)** — Version history and changes
+- **[K2_USER_GUIDE.md](K2_USER_GUIDE.md)**: complete user documentation
+- **[QUICK_START.md](QUICK_START.md)**: quick start guide
+- **[INSTALLATION.txt](INSTALLATION.txt)**: detailed installation instructions
+- **[CHANGELOG.md](CHANGELOG.md)**: version history
+- **[docs/SCORING_METHODS.md](docs/SCORING_METHODS.md)**: the scoring computations as implemented
 
 ## Project Structure
 
@@ -187,13 +191,13 @@ The executable will be created in `dist/K2/`.
 ## Python Dependencies
 
 See [requirements.txt](requirements.txt):
-- **pandas**, **numpy** — Data processing
-- **matplotlib**, **Pillow** — Visualization
-- **reportlab** — PDF generation
-- **ctx-python** — EPA CompTox API
-- **scipy** — RI calibration spline
-- **molmass** — Molecular weight calculations
-- **requests** — HTTP client
+- **pandas**, **numpy**: data processing
+- **matplotlib**, **Pillow**: visualization
+- **reportlab**: PDF generation
+- **ctx-python**: EPA CompTox API
+- **scipy**: RI calibration spline
+- **molmass**: monoisotopic masses
+- **requests**: HTTP client
 
 ## Citation
 

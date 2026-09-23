@@ -1,6 +1,6 @@
 ================================================================================
 K2 Annotator
-Version 3.0.21
+Version 3.1.0
 ================================================================================
 
 INSTALLATION INSTRUCTIONS
@@ -86,6 +86,44 @@ FIRST-TIME SETUP
 6. Run your first analysis!
 
 
+EPA COMPTOX API KEY (OPTIONAL)
+==============================
+
+The EPA CompTox API key enables hazard-data enrichment. Since version
+3.1.0 the key is handled as a secret:
+
+- It is never placed on a command line. The GUI and the pipeline hand it
+  to the matching step through the environment variable K2_EPA_API_KEY.
+- Command-line users can set K2_EPA_API_KEY themselves instead of passing
+  --api-key, e.g. (Windows):   set K2_EPA_API_KEY=your_key_here
+- The GUI remembers the key in %USERPROFILE%\.k2\credentials.json
+  (a separate file with an explanatory comment). It is NOT written to
+  k2_defaults.json, to .K2 project files, or to .K2config presets, so
+  those files can be shared safely. Delete credentials.json, or clear
+  the key in the Analysis Parameters screen, to forget it.
+
+
+WHAT'S NEW IN 3.1.0 (LAUNCH / PIPELINE)
+=======================================
+
+- Results are never overwritten: a second run with the same project
+  name goes to results\<name>_2, _3, ...
+- Every run writes pipeline_log.txt (the full console log) and, when
+  MZmine runs, mzmine_log.txt (the complete, unfiltered MZmine output)
+  into its results folder.
+- Zero-match runs finish with a warning (exit code 2) and still write
+  the feature summaries.
+- "Thread Count" in the MZmine screen is now honoured; tick
+  "Serialise MZmine import (1 thread)" to restore the old
+  single-threaded import on machines that hit the unsafe-memory-access
+  crash.
+- New analysis options: max library peaks, RI extrapolation mode
+  (spline/linear) and "allow runs with no blank samples".
+- K2.bat prefers the "py -3" launcher (avoids the Microsoft Store
+  python alias) and re-installs dependencies whenever requirements.txt
+  changes.
+
+
 INCLUDED FILES
 ==============
 
@@ -132,13 +170,21 @@ Solution:
 - Verify mzmine_console.exe path is correct
 - Check available RAM (MZmine needs significant memory)
 
-Problem: No matches found
+Problem: No matches found (run ends with "no Level-2 matches", exit code 2)
 Solution:
 - Verify library file format (CSV needs peaks_json column)
 - Check RI calibration file format
 - Ensure blank identifier matches sample names
 - Try adjusting matching thresholds (see K2_USER_GUIDE.md
   "Level 2 Matching Criteria" for the current gating rules)
+- Read results\<name>\pipeline_log.txt: it records the sample
+  classification, BFF filtering and matching diagnostics for the run
+
+Problem: "python" opens the Microsoft Store when K2.bat runs
+Solution:
+- Install Python from https://www.python.org/downloads/ (K2.bat then
+  uses the "py -3" launcher automatically), or disable the Store alias
+  under Settings > Apps > Advanced app settings > App execution aliases
 
 Problem: Pipeline refuses to start with "Insufficient free disk space
          for MZmine scratch"

@@ -17,6 +17,29 @@ import csv
 from k2_config import K2Config, K2Project
 from k2_screens import get_resource_path
 
+# Version string (v3.1.0). Prefer the single source of truth in
+# scripts/src/version.py when present; fall back so the GUI still starts
+# on a tree that predates that module.
+try:
+    from src.version import __version__ as K2_VERSION
+except Exception:
+    K2_VERSION = "3.1.0"
+
+# Keys copied from pipeline_config into the user defaults when saving a
+# .K2config preset (v3.1.0). Deliberately excludes per-project data
+# (sample_grouping, is_config, surrogate_config, num_groups), the API key
+# and every path key: a preset must be shareable and machine-independent.
+PRESET_KEYS = (
+    'mzmine_threads',
+    'mzmine_serial_import',
+    'blank_identifier',
+    'bff_mode',
+    'bff_c_factor',
+    'max_lib_peaks',
+    'ri_extrapolation',
+    'allow_no_blanks',
+)
+
 
 class K2Application(tk.Tk):
     """Main K2 Annotator GUI Application"""
@@ -24,7 +47,7 @@ class K2Application(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("K2 Annotator")
+        self.title(f"K2 Annotator {K2_VERSION}")
         self.geometry("900x700")
 
         # Configuration and project management
@@ -61,23 +84,7 @@ class K2Application(tk.Tk):
         self.current_screen = None
 
         # Pipeline state
-        self.pipeline_config = {
-            'entry_point': None,  # 'raw', 'mzml', 'msp'
-            'input_folder': '',
-            'output_folder': '',
-            'project_name': '',
-            'msconvert_path': self.app_config.get('msconvert_path', ''),
-            'mzmine_path': self.app_config.get('mzmine_path', ''),
-            'mzmine_user_file': self.app_config.get('mzmine_user_file', ''),
-            'mzmine_batch_file': self.app_config.get('mzmine_batch_file', ''),
-            'mzmine_threads': self.app_config.get('mzmine_threads', 2),
-            'library_path': self.app_config.get('library_path', ''),
-            'ri_cal_path': self.app_config.get('ri_cal_path', ''),
-            'epa_api_key': self.app_config.get('epa_api_key', ''),
-            'blank_identifier': self.app_config.get('blank_identifier', 'fieldblank'),
-            'bff_mode': self.app_config.get('bff_mode', 'standard'),
-            'bff_c_factor': self.app_config.get('bff_c_factor', 5.0),
-        }
+        self.pipeline_config = self._default_pipeline_config()
 
         # Initialize screens
         self.init_screens()
@@ -87,6 +94,37 @@ class K2Application(tk.Tk):
 
         # Handle window close
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def _default_pipeline_config(self):
+        """Build a fresh pipeline_config from the user defaults.
+
+        v3.1.0: new_project() and open_project() rebuild the dict from
+        this explicit template instead of mutating the previous project's
+        dict, so per-project data (sample_grouping, is_config,
+        surrogate_config, num_groups) can never leak between projects.
+        """
+        cfg = self.app_config
+        return {
+            'entry_point': None,  # 'raw', 'mzml', 'msp'
+            'input_folder': '',
+            'output_folder': '',
+            'project_name': '',
+            'msconvert_path': cfg.get('msconvert_path', ''),
+            'mzmine_path': cfg.get('mzmine_path', ''),
+            'mzmine_user_file': cfg.get('mzmine_user_file', ''),
+            'mzmine_batch_file': cfg.get('mzmine_batch_file', ''),
+            'mzmine_threads': cfg.get('mzmine_threads', 2),
+            'mzmine_serial_import': cfg.get('mzmine_serial_import', False),
+            'library_path': cfg.get('library_path', ''),
+            'ri_cal_path': cfg.get('ri_cal_path', ''),
+            'epa_api_key': cfg.get('epa_api_key', ''),
+            'blank_identifier': cfg.get('blank_identifier', 'fieldblank'),
+            'bff_mode': cfg.get('bff_mode', 'standard'),
+            'bff_c_factor': cfg.get('bff_c_factor', 5.0),
+            'max_lib_peaks': cfg.get('max_lib_peaks', 20),
+            'ri_extrapolation': cfg.get('ri_extrapolation', 'spline'),
+            'allow_no_blanks': cfg.get('allow_no_blanks', False),
+        }
 
     def create_menu(self):
         """Create application menu bar"""
@@ -210,19 +248,14 @@ class K2Application(tk.Tk):
 
     def new_project(self):
         """Start a new project"""
-        # Reset pipeline config to defaults
-        self.pipeline_config.update({
-            'entry_point': None,
-            'input_folder': '',
-            'output_folder': '',
-            'project_name': '',
-        })
-        # Explicitly clear transient data
-        if 'sample_grouping' in self.pipeline_config:
-            del self.pipeline_config['sample_grouping']
-        if 'num_groups' in self.pipeline_config:
-            del self.pipeline_config['num_groups']
-            
+        # Rebuild pipeline config from defaults (v3.1.0: no leakage of
+        # sample_grouping / is_config / surrogate_config from the previous
+        # project). The in-session API key is carried over.
+        api_key = self.pipeline_config.get('epa_api_key', '')
+        self.pipeline_config = self._default_pipeline_config()
+        if api_key:
+            self.pipeline_config['epa_api_key'] = api_key
+
         self.current_project_file = None
         self.project = K2Project()
         self.show_screen('entry_select')
@@ -240,8 +273,15 @@ class K2Application(tk.Tk):
                 self.project = project
                 self.current_project_file = filepath
 
-                # Load project configuration
-                self.pipeline_config.update(project.get('pipeline_config', {}))
+                # Load project configuration on top of a fresh defaults
+                # dict (v3.1.0: nothing from the previous project survives).
+                api_key = self.pipeline_config.get('epa_api_key', '')
+                self.pipeline_config = self._default_pipeline_config()
+                if api_key:
+                    self.pipeline_config['epa_api_key'] = api_key
+                loaded = project.get('pipeline_config', {}) or {}
+                # Old .K2 files may carry a key; it is never re-saved.
+                self.pipeline_config.update(loaded)
                 self.pipeline_config['project_name'] = project.get('project_name', '')
                 self.pipeline_config['input_folder'] = project.get('input_folder', '')
                 self.pipeline_config['output_folder'] = project.get('output_folder', '')
@@ -319,12 +359,15 @@ class K2Application(tk.Tk):
 
         if filepath:
             if self.app_config.load_preset(filepath):
-                # Update pipeline config with loaded values
+                # Update pipeline config with loaded values (paths are
+                # pruned by K2Config.load_preset if absent on this machine;
+                # the API key is never part of a preset).
                 for key in ['msconvert_path', 'mzmine_path', 'mzmine_user_file',
-                           'mzmine_batch_file', 'mzmine_threads', 'library_path',
-                           'ri_cal_path', 'epa_api_key', 'blank_identifier', 'bff_mode',
-                           'bff_c_factor']:
+                           'mzmine_batch_file', 'library_path', 'ri_cal_path']:
                     self.pipeline_config[key] = self.app_config.get(key, '')
+                for key in PRESET_KEYS:
+                    self.pipeline_config[key] = self.app_config.get(
+                        key, self.app_config.defaults.get(key))
 
                 messagebox.showinfo("Success", "Preset loaded successfully")
             else:
@@ -339,10 +382,12 @@ class K2Application(tk.Tk):
         )
 
         if filepath:
-            # Update config with current values
-            for key, value in self.pipeline_config.items():
-                if key not in ['input_folder', 'output_folder', 'project_name', 'entry_point']:
-                    self.app_config.set(key, value)
+            # Update config with current values. v3.1.0: whitelist only —
+            # sample_grouping, is_config, surrogate_config, the API key and
+            # every path key are deliberately NOT copied into a preset.
+            for key in PRESET_KEYS:
+                if key in self.pipeline_config:
+                    self.app_config.set(key, self.pipeline_config[key])
 
             if self.app_config.export_preset(filepath):
                 messagebox.showinfo("Success", "Preset saved successfully")
@@ -396,7 +441,7 @@ For detailed documentation, see the included user guide PDF.
         """Show about dialog"""
         messagebox.showinfo(
             "About K2 Annotator",
-            "K2 Annotator\n\n"
+            f"K2 Annotator\nVersion {K2_VERSION}\n\n"
             "GC-MS Suspect Screening Software\n\n"
             "A tool for non-targeted GC-MS suspect screening:\n"
             "feature detection, Level 2 spectral matching, and\n"

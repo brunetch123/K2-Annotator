@@ -9,11 +9,54 @@ import threading
 import subprocess
 import sys
 import os
+import re
 from pathlib import Path
 import csv
 import json
 from PIL import Image, ImageTk
 from src.structure_helper import StructureHelper
+
+
+# Environment variable used to hand the EPA CompTox API key to the pipeline
+# (v3.1.0). It is never placed on the command line.
+API_KEY_ENV = "K2_EPA_API_KEY"
+
+_SAMPLE_NAME_EXT_RE = re.compile(r'\.(mzml|mzxml|d|raw)$', re.IGNORECASE)
+_SAMPLE_NAME_SUFFIXES = (' Peak area', ' Peak height')
+
+
+def normalise_sample_name(name):
+    """Canonical sample name used as the key of sample_grouping.json.
+
+    Strips a trailing " Peak area" / " Peak height" (MZmine quant column
+    suffixes) and then a trailing .mzML / .mzXML / .d / .raw extension
+    (case-insensitive), so that names derived from raw/mzML file names in
+    the GUI and names derived from MZmine quant headers agree.
+    cli.py applies the same normalisation when it reads the grouping
+    file, so the two sides always meet on the same key.
+    """
+    name = str(name).strip()
+    for suffix in _SAMPLE_NAME_SUFFIXES:
+        if name.endswith(suffix):
+            name = name[:-len(suffix)].rstrip()
+            break
+    name = _SAMPLE_NAME_EXT_RE.sub('', name)
+    return name
+
+
+def results_dir_prefix(project_name):
+    """The prefix gcms_pipeline uses for results/<name> directories.
+
+    v3.1.0: gcms_pipeline sanitises --name for use as a path component
+    (characters outside [A-Za-z0-9._-] become '_') and may append _2, _3
+    ... to avoid overwriting. Lookups in the GUI must use the same
+    sanitised prefix.
+    """
+    try:
+        from gcms_pipeline import sanitise_name
+        return sanitise_name(project_name)
+    except Exception:
+        return re.sub(r'[^A-Za-z0-9._-]', '_', str(project_name).strip())
 
 
 def get_resource_path(relative_path):
@@ -731,12 +774,15 @@ class SampleClassificationScreen(BaseScreen):
             return
 
         found_names = []
+        # v3.1.0: key every sample by normalise_sample_name() so the names
+        # here match the quant column names cli.py derives from MZmine
+        # headers (which may carry the .mzML extension).
         if entry_point == 'raw':
             from gcms_pipeline import find_d_files
-            found_names = [f.stem for f in find_d_files(input_folder)]
+            found_names = [normalise_sample_name(f.name) for f in find_d_files(input_folder)]
         elif entry_point == 'mzml':
             from gcms_pipeline import find_mzml_files
-            found_names = [f.stem for f in find_mzml_files(input_folder)]
+            found_names = [normalise_sample_name(f.name) for f in find_mzml_files(input_folder)]
         elif entry_point == 'msp':
             from gcms_pipeline import find_mzmine_outputs
             quant_file, _ = find_mzmine_outputs(input_folder)
@@ -748,8 +794,9 @@ class SampleClassificationScreen(BaseScreen):
                                     'row ion mobility unit', 'row CCS', 'correlation group ID',
                                     'annotation network number', 'best ion', 'auto MS2 verify',
                                     'identified by n=', 'partners', 'neutral M mass']
-                    found_names = [col.replace(' Peak area', '') for col in df.columns 
-                                  if col not in metadata_cols and ' Peak area' in col]
+                    found_names = [normalise_sample_name(col) for col in df.columns
+                                  if col not in metadata_cols
+                                  and (' Peak area' in col or ' Peak height' in col)]
                 except Exception:
                     pass
 
@@ -1235,8 +1282,9 @@ class SampleClassificationScreen(BaseScreen):
             self.app.show_screen('surrogate_config')
 
     def go_next(self):
-        # Save classification to config (v3.0.0: extended structure)
-        grouping = {s['name']: s for s in self.samples}
+        # Save classification to config (v3.0.0: extended structure).
+        # v3.1.0: keys are normalised sample names (see normalise_sample_name).
+        grouping = {normalise_sample_name(s['name']): s for s in self.samples}
         self.app.pipeline_config['sample_grouping'] = grouping
 
         # v3.0.0: Update surrogate config with sample information
@@ -1328,470 +1376,6 @@ class SampleClassificationScreen(BaseScreen):
         self.app.pipeline_config['is_config'] = is_config
 
         # Navigate directly to execution (v2.8.0: removed separate IS screen)
-        self.app.show_screen('execution')
-
-
-class InternalStandardScreen(BaseScreen):
-    """Internal Standard Normalization Configuration (v2.6.0)"""
-
-    def __init__(self, parent, app):
-        super().__init__(parent, app)
-
-        self.create_header(
-            "Internal Standard Normalization",
-            "Normalize feature abundances using internal standard peak areas (optional)"
-        )
-
-        # Main content area with scroll
-        main_frame = ttk.Frame(self)
-        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
-
-        # Enable checkbox
-        enable_frame = ttk.Frame(main_frame)
-        enable_frame.pack(fill='x', pady=(0, 15))
-
-        self.enable_var = tk.BooleanVar(value=False)
-        enable_check = ttk.Checkbutton(
-            enable_frame,
-            text="Enable Internal Standard Normalization",
-            variable=self.enable_var,
-            command=self.toggle_enable
-        )
-        enable_check.pack(anchor='w')
-
-        ttk.Label(
-            enable_frame,
-            text="Note: Normalization is applied BEFORE Blank Feature Filtering (BFF)",
-            font=('Arial', 9, 'italic'),
-            foreground='gray'
-        ).pack(anchor='w', padx=(25, 0))
-
-        # Method selection frame (initially disabled)
-        self.method_frame = ttk.LabelFrame(main_frame, text="Normalization Method", padding=15)
-        self.method_frame.pack(fill='both', expand=True, pady=(0, 10))
-
-        self.method_var = tk.StringVar(value='manual')
-
-        # Manual entry
-        manual_radio = ttk.Radiobutton(
-            self.method_frame,
-            text="Manual Entry",
-            variable=self.method_var,
-            value='manual',
-            command=self.update_method_display
-        )
-        manual_radio.grid(row=0, column=0, sticky='w', padx=5, pady=5)
-
-        # Auto by m/z + RI
-        mz_ri_radio = ttk.Radiobutton(
-            self.method_frame,
-            text="Auto-detect by m/z + RI",
-            variable=self.method_var,
-            value='mz_ri',
-            command=self.update_method_display
-        )
-        mz_ri_radio.grid(row=1, column=0, sticky='w', padx=5, pady=5)
-
-        # Auto by MSP
-        msp_radio = ttk.Radiobutton(
-            self.method_frame,
-            text="Auto-detect by MSP Spectrum",
-            variable=self.method_var,
-            value='msp',
-            command=self.update_method_display
-        )
-        msp_radio.grid(row=2, column=0, sticky='w', padx=5, pady=5)
-
-        # --- Manual Entry Panel ---
-        self.manual_panel = ttk.Frame(self.method_frame)
-        self.manual_panel.grid(row=3, column=0, columnspan=2, sticky='nsew', pady=10)
-
-        ttk.Label(
-            self.manual_panel,
-            text="Enter IS peak area for each sample (or import CSV):",
-            font=('Arial', 9, 'bold')
-        ).pack(anchor='w', pady=(0, 5))
-
-        # Buttons for CSV
-        button_row = ttk.Frame(self.manual_panel)
-        button_row.pack(fill='x', pady=(0, 5))
-
-        ttk.Button(button_row, text="Download Template CSV", command=self.download_template).pack(side='left', padx=(0, 5))
-        ttk.Button(button_row, text="Import CSV", command=self.import_csv).pack(side='left', padx=(0, 5))
-        ttk.Button(button_row, text="Export Current", command=self.export_csv).pack(side='left')
-
-        # Table for manual entry
-        table_frame = ttk.Frame(self.manual_panel)
-        table_frame.pack(fill='both', expand=True)
-
-        self.is_table = ttk.Treeview(
-            table_frame,
-            columns=('sample', 'is_value'),
-            show='headings',
-            height=8
-        )
-        self.is_table.heading('sample', text='Sample Name')
-        self.is_table.heading('is_value', text='IS Peak Area')
-        self.is_table.column('sample', width=300)
-        self.is_table.column('is_value', width=150)
-
-        scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=self.is_table.yview)
-        self.is_table.configure(yscrollcommand=scrollbar.set)
-
-        self.is_table.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
-
-        self.is_table.bind('<Double-1>', self.edit_is_value)
-
-        # --- m/z + RI Panel ---
-        self.mz_ri_panel = ttk.Frame(self.method_frame)
-        self.mz_ri_panel.grid(row=3, column=0, columnspan=2, sticky='nsew', pady=10)
-
-        # RI/RT selection (v2.7.0)
-        rt_selection_frame = ttk.Frame(self.mz_ri_panel)
-        rt_selection_frame.grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 10))
-
-        ttk.Label(rt_selection_frame, text="Match by:", font=('Arial', 9, 'bold')).pack(side='left', padx=(0, 10))
-        self.use_rt_mz_var = tk.BooleanVar(value=False)
-        ttk.Radiobutton(rt_selection_frame, text="Retention Index (RI)", variable=self.use_rt_mz_var, value=False, command=self.update_rt_labels_mz).pack(side='left', padx=5)
-        ttk.Radiobutton(rt_selection_frame, text="Retention Time (RT)", variable=self.use_rt_mz_var, value=True, command=self.update_rt_labels_mz).pack(side='left', padx=5)
-
-        ttk.Label(self.mz_ri_panel, text="Target m/z:", font=('Arial', 9, 'bold')).grid(row=1, column=0, sticky='w', pady=5)
-        self.target_mz_var = tk.DoubleVar(value=0.0)
-        ttk.Entry(self.mz_ri_panel, textvariable=self.target_mz_var, width=15).grid(row=1, column=1, sticky='w', padx=5, pady=5)
-
-        ttk.Label(self.mz_ri_panel, text="m/z Tolerance:", font=('Arial', 9, 'bold')).grid(row=1, column=2, sticky='w', pady=5, padx=(15, 0))
-        self.mz_tol_var = tk.DoubleVar(value=0.5)
-        ttk.Entry(self.mz_ri_panel, textvariable=self.mz_tol_var, width=10).grid(row=1, column=3, sticky='w', padx=5, pady=5)
-
-        self.target_ri_label = ttk.Label(self.mz_ri_panel, text="Target RI:", font=('Arial', 9, 'bold'))
-        self.target_ri_label.grid(row=2, column=0, sticky='w', pady=5)
-        self.target_ri_var = tk.DoubleVar(value=0.0)
-        ttk.Entry(self.mz_ri_panel, textvariable=self.target_ri_var, width=15).grid(row=2, column=1, sticky='w', padx=5, pady=5)
-
-        self.ri_tol_label = ttk.Label(self.mz_ri_panel, text="RI Tolerance:", font=('Arial', 9, 'bold'))
-        self.ri_tol_label.grid(row=2, column=2, sticky='w', pady=5, padx=(15, 0))
-        self.ri_tol_var = tk.DoubleVar(value=50.0)
-        ttk.Entry(self.mz_ri_panel, textvariable=self.ri_tol_var, width=10).grid(row=2, column=3, sticky='w', padx=5, pady=5)
-
-        ttk.Label(
-            self.mz_ri_panel,
-            text="The software will find the feature with highest abundance matching these criteria.",
-            font=('Arial', 8, 'italic'),
-            foreground='gray'
-        ).grid(row=3, column=0, columnspan=4, sticky='w', pady=(10, 0))
-
-        # --- MSP Panel ---
-        self.msp_panel = ttk.Frame(self.method_frame)
-        self.msp_panel.grid(row=3, column=0, columnspan=2, sticky='nsew', pady=10)
-
-        # RI/RT selection (v2.7.0)
-        rt_selection_frame_msp = ttk.Frame(self.msp_panel)
-        rt_selection_frame_msp.grid(row=0, column=0, columnspan=3, sticky='w', pady=(0, 10))
-
-        ttk.Label(rt_selection_frame_msp, text="Match by:", font=('Arial', 9, 'bold')).pack(side='left', padx=(0, 10))
-        self.use_rt_msp_var = tk.BooleanVar(value=False)
-        ttk.Radiobutton(rt_selection_frame_msp, text="Retention Index (RI)", variable=self.use_rt_msp_var, value=False, command=self.update_rt_labels_msp).pack(side='left', padx=5)
-        ttk.Radiobutton(rt_selection_frame_msp, text="Retention Time (RT)", variable=self.use_rt_msp_var, value=True, command=self.update_rt_labels_msp).pack(side='left', padx=5)
-
-        ttk.Label(self.msp_panel, text="IS Spectrum File (.msp):", font=('Arial', 9, 'bold')).grid(row=1, column=0, sticky='w', pady=5)
-        self.is_msp_var = tk.StringVar(value='')
-        ttk.Entry(self.msp_panel, textvariable=self.is_msp_var, width=40).grid(row=1, column=1, sticky='ew', padx=5, pady=5)
-        ttk.Button(self.msp_panel, text="Browse...", command=self.browse_is_msp).grid(row=1, column=2, sticky='w', pady=5)
-
-        self.msp_panel.columnconfigure(1, weight=1)
-
-        self.msp_tol_label = ttk.Label(self.msp_panel, text="RI Tolerance:", font=('Arial', 9, 'bold'))
-        self.msp_tol_label.grid(row=2, column=0, sticky='w', pady=5)
-        self.msp_ri_tol_var = tk.DoubleVar(value=50.0)
-        ttk.Entry(self.msp_panel, textvariable=self.msp_ri_tol_var, width=10).grid(row=2, column=1, sticky='w', padx=5, pady=5)
-
-        ttk.Label(
-            self.msp_panel,
-            text="The software will match the spectrum to features using spectral similarity.",
-            font=('Arial', 8, 'italic'),
-            foreground='gray'
-        ).grid(row=3, column=0, columnspan=3, sticky='w', pady=(10, 0))
-
-        # Navigation buttons
-        self.create_button_row([
-            ("Back", self.go_back),
-            ("Next", self.go_next)
-        ])
-
-        # Initialize state
-        self.is_values = {}  # {sample_name: float}
-        self.update_method_display()
-        self.toggle_enable()
-
-    def on_show(self):
-        """Populate sample list when screen is shown"""
-        # Get sample list from app config
-        grouping = self.app.pipeline_config.get('sample_grouping', {})
-        if grouping:
-            self.is_values = {}
-            for sample_name, sample_info in grouping.items():
-                # Initialize with 0 or preserve existing value
-                if sample_name not in self.is_values:
-                    self.is_values[sample_name] = 0.0
-
-            self.refresh_table()
-
-    def toggle_enable(self):
-        """Enable/disable method frame based on checkbox"""
-        if self.enable_var.get():
-            self._enable_widgets(self.method_frame)
-        else:
-            self._disable_widgets(self.method_frame)
-
-    def _enable_widgets(self, parent):
-        """Recursively enable all widgets"""
-        for child in parent.winfo_children():
-            if isinstance(child, (ttk.Frame, ttk.LabelFrame)):
-                self._enable_widgets(child)
-            else:
-                try:
-                    child.configure(state='normal')
-                except Exception:
-                    pass
-
-    def _disable_widgets(self, parent):
-        """Recursively disable all widgets"""
-        for child in parent.winfo_children():
-            if isinstance(child, (ttk.Frame, ttk.LabelFrame)):
-                self._disable_widgets(child)
-            else:
-                try:
-                    child.configure(state='disabled')
-                except Exception:
-                    pass
-
-    def update_method_display(self):
-        """Show/hide panels based on selected method"""
-        method = self.method_var.get()
-
-        # Hide all panels
-        self.manual_panel.grid_remove()
-        self.mz_ri_panel.grid_remove()
-        self.msp_panel.grid_remove()
-
-        # Show selected panel
-        if method == 'manual':
-            self.manual_panel.grid()
-        elif method == 'mz_ri':
-            self.mz_ri_panel.grid()
-        elif method == 'msp':
-            self.msp_panel.grid()
-
-    def refresh_table(self):
-        """Refresh the IS values table"""
-        self.is_table.delete(*self.is_table.get_children())
-
-        for sample, value in sorted(self.is_values.items()):
-            self.is_table.insert('', 'end', values=(sample, f"{value:.2f}"))
-
-    def edit_is_value(self, event):
-        """Edit IS value in table"""
-        region = self.is_table.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-
-        column = self.is_table.identify_column(event.x)
-        if column != "#2":  # Only edit IS value column
-            return
-
-        item = self.is_table.identify_row(event.y)
-        if not item:
-            return
-
-        # Get current values
-        values = self.is_table.item(item, 'values')
-        sample_name = values[0]
-        current_value = values[1]
-
-        # Get cell bounding box
-        x, y, w, h = self.is_table.bbox(item, column)
-
-        # Create entry widget
-        entry = ttk.Entry(self.is_table)
-        entry.place(x=x, y=y, width=w, height=h)
-        entry.insert(0, current_value)
-        entry.select_range(0, tk.END)
-        entry.focus()
-
-        def save_value(event=None):
-            try:
-                new_value = float(entry.get())
-                self.is_values[sample_name] = new_value
-                self.refresh_table()
-            except ValueError:
-                messagebox.showerror("Invalid Input", "Please enter a valid number")
-            entry.destroy()
-
-        entry.bind('<Return>', save_value)
-        entry.bind('<FocusOut>', lambda e: entry.destroy())
-        entry.bind('<Escape>', lambda e: entry.destroy())
-
-    def download_template(self):
-        """Generate and download CSV template"""
-        filepath = filedialog.asksaveasfilename(
-            title="Save IS Template",
-            defaultextension=".csv",
-            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
-        )
-
-        if filepath:
-            try:
-                with open(filepath, 'w', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(['Sample_Name', 'IS_Peak_Area'])
-                    for sample in sorted(self.is_values.keys()):
-                        writer.writerow([sample, 0.0])
-
-                messagebox.showinfo("Success", f"Template saved to:\n{filepath}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to save template:\n{e}")
-
-    def import_csv(self):
-        """Import IS values from CSV"""
-        filepath = filedialog.askopenfilename(
-            title="Import IS Values",
-            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
-        )
-
-        if filepath:
-            try:
-                with open(filepath, 'r') as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        sample = row.get('Sample_Name', row.get('Sample', ''))
-                        value = row.get('IS_Peak_Area', row.get('IS_Value', '0'))
-
-                        if sample in self.is_values:
-                            try:
-                                self.is_values[sample] = float(value)
-                            except (ValueError, TypeError):
-                                pass
-
-                self.refresh_table()
-                messagebox.showinfo("Success", "IS values imported successfully")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to import CSV:\n{e}")
-
-    def export_csv(self):
-        """Export current IS values to CSV"""
-        filepath = filedialog.asksaveasfilename(
-            title="Export IS Values",
-            defaultextension=".csv",
-            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
-        )
-
-        if filepath:
-            try:
-                with open(filepath, 'w', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(['Sample_Name', 'IS_Peak_Area'])
-                    for sample, value in sorted(self.is_values.items()):
-                        writer.writerow([sample, value])
-
-                messagebox.showinfo("Success", f"IS values exported to:\n{filepath}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to export CSV:\n{e}")
-
-    def browse_is_msp(self):
-        """Browse for IS MSP file"""
-        filepath = filedialog.askopenfilename(
-            title="Select IS Spectrum File",
-            filetypes=[("MSP Files", "*.msp"), ("All Files", "*.*")]
-        )
-
-        if filepath:
-            self.is_msp_var.set(filepath)
-
-    def update_rt_labels_mz(self):
-        """Update labels for m/z+RI panel based on RI/RT selection (v2.7.0)"""
-        if self.use_rt_mz_var.get():
-            # Use RT
-            self.target_ri_label.config(text="Target RT (min):")
-            self.ri_tol_label.config(text="RT Tolerance (min):")
-            self.ri_tol_var.set(0.1)  # Default RT tolerance in minutes
-        else:
-            # Use RI
-            self.target_ri_label.config(text="Target RI:")
-            self.ri_tol_label.config(text="RI Tolerance:")
-            self.ri_tol_var.set(50.0)  # Default RI tolerance
-
-    def update_rt_labels_msp(self):
-        """Update labels for MSP panel based on RI/RT selection (v2.7.0)"""
-        if self.use_rt_msp_var.get():
-            # Use RT
-            self.msp_tol_label.config(text="RT Tolerance (min):")
-            self.msp_ri_tol_var.set(0.1)  # Default RT tolerance in minutes
-        else:
-            # Use RI
-            self.msp_tol_label.config(text="RI Tolerance:")
-            self.msp_ri_tol_var.set(50.0)  # Default RI tolerance
-
-    def go_back(self):
-        """Go back to sample grouping"""
-        self.app.show_screen('sample_grouping')
-
-    def go_next(self):
-        """Validate and proceed"""
-        # Build IS config
-        is_config = {
-            'enabled': self.enable_var.get()
-        }
-
-        if is_config['enabled']:
-            method = self.method_var.get()
-            is_config['method'] = method
-
-            if method == 'manual':
-                # Check if any IS values were provided
-                if not any(v > 0 for v in self.is_values.values()):
-                    result = messagebox.askyesno(
-                        "No IS Values",
-                        "No IS values have been entered. Continue without normalization?",
-                        icon='warning'
-                    )
-                    if not result:
-                        return
-                    is_config['enabled'] = False
-                else:
-                    is_config['is_values'] = self.is_values.copy()
-
-            elif method == 'mz_ri':
-                target_mz = self.target_mz_var.get()
-                target_value = self.target_ri_var.get()
-                use_rt = self.use_rt_mz_var.get()
-
-                if target_mz <= 0 or target_value <= 0:
-                    param_name = "RT" if use_rt else "RI"
-                    messagebox.showerror("Invalid Input", f"Please enter valid m/z and {param_name} values (> 0)")
-                    return
-
-                is_config['target_mz'] = target_mz
-                is_config['mz_tolerance'] = self.mz_tol_var.get()
-                is_config['target_value'] = target_value
-                is_config['value_tolerance'] = self.ri_tol_var.get()
-                is_config['use_rt'] = use_rt  # v2.7.0: RT or RI selection
-
-            elif method == 'msp':
-                msp_file = self.is_msp_var.get()
-
-                if not msp_file or not Path(msp_file).exists():
-                    messagebox.showerror("Invalid File", "Please select a valid MSP file")
-                    return
-
-                is_config['msp_file'] = msp_file
-                is_config['value_tolerance'] = self.msp_ri_tol_var.get()
-                is_config['use_rt'] = self.use_rt_msp_var.get()  # v2.7.0: RT or RI selection
-
-        # Store in pipeline config
-        self.app.pipeline_config['is_config'] = is_config
-
-        # Navigate to execution
         self.app.show_screen('execution')
 
 
@@ -1972,6 +1556,26 @@ class MZmineScreen(BaseScreen):
         )
         threads_spin.pack(anchor='w')
 
+        # v3.1.0: optional serialised import (--mzmine-import-threads 1).
+        # Before 3.1.0 this was silently always on, so "Thread Count"
+        # had no effect.
+        self.serial_import_var = tk.BooleanVar(value=False)
+        serial_check = ttk.Checkbutton(
+            threads_frame,
+            text="Serialise MZmine import (1 thread)",
+            variable=self.serial_import_var
+        )
+        serial_check.pack(anchor='w', pady=(8, 0))
+        ttk.Label(
+            threads_frame,
+            text="Runs MZmine single-threaded. Slower, but avoids the "
+                 "\"unsafe memory access\" import crash some Windows "
+                 "machines hit with parallel mzML import.",
+            foreground='gray',
+            wraplength=600,
+            justify='left'
+        ).pack(anchor='w')
+
         # Save as default
         self.save_default_var = tk.BooleanVar(value=True)
         save_check = ttk.Checkbutton(
@@ -2012,6 +1616,7 @@ class MZmineScreen(BaseScreen):
         self.user_var.set(user_path)
         self.batch_var.set(batch_path)
         self.threads_var.set(self.app.pipeline_config.get('mzmine_threads', 2))
+        self.serial_import_var.set(bool(self.app.pipeline_config.get('mzmine_serial_import', False)))
 
     def browse_mzmine(self):
         filepath = filedialog.askopenfilename(
@@ -2063,12 +1668,14 @@ class MZmineScreen(BaseScreen):
         self.app.pipeline_config['mzmine_user_file'] = self.user_var.get()
         self.app.pipeline_config['mzmine_batch_file'] = self.batch_var.get()
         self.app.pipeline_config['mzmine_threads'] = self.threads_var.get()
+        self.app.pipeline_config['mzmine_serial_import'] = bool(self.serial_import_var.get())
 
         if self.save_default_var.get():
             self.app.app_config.set('mzmine_path', self.mzmine_var.get())
             self.app.app_config.set('mzmine_user_file', self.user_var.get())
             self.app.app_config.set('mzmine_batch_file', self.batch_var.get())
             self.app.app_config.set('mzmine_threads', self.threads_var.get())
+            self.app.app_config.set('mzmine_serial_import', bool(self.serial_import_var.get()))
             self.app.app_config.save_defaults()
 
         # Next: Sample Grouping
@@ -2182,6 +1789,53 @@ class AnalysisParamsScreen(BaseScreen):
             foreground='gray'
         ).pack(side='left', padx=(8, 0))
 
+        # v3.1.0: allow zero-blank runs (--allow-no-blanks)
+        self.allow_no_blanks_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            bff_frame,
+            text="Allow runs with no blank samples (skips blank feature filtering)",
+            variable=self.allow_no_blanks_var
+        ).pack(anchor='w', pady=(10, 0))
+
+        # v3.1.0: matching / RI options
+        match_frame = ttk.LabelFrame(content, text="Matching Options", padding=15)
+        match_frame.pack(fill='x', pady=10)
+
+        peaks_row = ttk.Frame(match_frame)
+        peaks_row.pack(fill='x')
+        ttk.Label(peaks_row, text="Max library peaks (top-N by intensity):").pack(side='left')
+        self.max_lib_peaks_var = tk.IntVar(value=20)
+        ttk.Spinbox(
+            peaks_row,
+            from_=0,
+            to=1000,
+            increment=1,
+            textvariable=self.max_lib_peaks_var,
+            width=8
+        ).pack(side='left', padx=(8, 0))
+        ttk.Label(
+            peaks_row,
+            text="Default 20. 0 = keep full library spectra (no trimming).",
+            foreground='gray'
+        ).pack(side='left', padx=(8, 0))
+
+        ri_row = ttk.Frame(match_frame)
+        ri_row.pack(fill='x', pady=(10, 0))
+        ttk.Label(ri_row, text="RI extrapolation outside alkane range:").pack(side='left')
+        self.ri_extrapolation_var = tk.StringVar(value='spline')
+        ttk.Combobox(
+            ri_row,
+            textvariable=self.ri_extrapolation_var,
+            values=('spline', 'linear'),
+            state='readonly',
+            width=10
+        ).pack(side='left', padx=(8, 0))
+        ttk.Label(
+            ri_row,
+            text="spline = cubic spline (default); linear = van den Dool from the terminal alkane pair.",
+            foreground='gray'
+        ).pack(side='left', padx=(8, 0))
+
         # Save preset button
         preset_frame = ttk.Frame(content)
         preset_frame.pack(fill='x', pady=20)
@@ -2212,6 +1866,14 @@ class AnalysisParamsScreen(BaseScreen):
         self.blank_var.set(self.app.pipeline_config.get('blank_identifier', 'fieldblank'))
         self.bff_mode_var.set(self.app.pipeline_config.get('bff_mode', 'standard'))
         self.bff_cfactor_var.set(str(self.app.pipeline_config.get('bff_c_factor', 5.0)))
+        # v3.1.0
+        try:
+            self.max_lib_peaks_var.set(int(self.app.pipeline_config.get('max_lib_peaks', 20)))
+        except (TypeError, ValueError):
+            self.max_lib_peaks_var.set(20)
+        ri_mode = self.app.pipeline_config.get('ri_extrapolation', 'spline')
+        self.ri_extrapolation_var.set(ri_mode if ri_mode in ('spline', 'linear') else 'spline')
+        self.allow_no_blanks_var.set(bool(self.app.pipeline_config.get('allow_no_blanks', False)))
 
     def browse_library(self):
         filepath = filedialog.askopenfilename(
@@ -2253,21 +1915,43 @@ class AnalysisParamsScreen(BaseScreen):
             messagebox.showerror("Error", f"BFF c-factor must be > 0 (got {cfactor})")
             return
 
+        # v3.1.0: validate max library peaks (integer >= 0; 0 disables trimming)
+        try:
+            max_lib_peaks = int(self.max_lib_peaks_var.get())
+        except (TypeError, ValueError, tk.TclError):
+            messagebox.showerror("Error", "Max library peaks must be a whole number (0 = no trimming)")
+            return
+        if max_lib_peaks < 0:
+            messagebox.showerror("Error", f"Max library peaks must be >= 0 (got {max_lib_peaks})")
+            return
+
+        ri_extrapolation = self.ri_extrapolation_var.get()
+        if ri_extrapolation not in ('spline', 'linear'):
+            ri_extrapolation = 'spline'
+
         # Save to config
         self.app.pipeline_config['library_path'] = self.library_var.get()
         self.app.pipeline_config['ri_cal_path'] = self.ri_var.get()
-        self.app.pipeline_config['epa_api_key'] = self.api_var.get()
+        self.app.pipeline_config['epa_api_key'] = self.api_var.get().strip()
         self.app.pipeline_config['blank_identifier'] = self.blank_var.get()
         self.app.pipeline_config['bff_mode'] = self.bff_mode_var.get()
         self.app.pipeline_config['bff_c_factor'] = cfactor
+        self.app.pipeline_config['max_lib_peaks'] = max_lib_peaks
+        self.app.pipeline_config['ri_extrapolation'] = ri_extrapolation
+        self.app.pipeline_config['allow_no_blanks'] = bool(self.allow_no_blanks_var.get())
 
-        # Save defaults
+        # Save defaults. The API key is handed to K2Config too, but
+        # K2Config.save_defaults() keeps it OUT of k2_defaults.json and
+        # writes it to ~/.k2/credentials.json instead (v3.1.0).
         self.app.app_config.set('library_path', self.library_var.get())
         self.app.app_config.set('ri_cal_path', self.ri_var.get())
-        self.app.app_config.set('epa_api_key', self.api_var.get())
+        self.app.app_config.set('epa_api_key', self.api_var.get().strip())
         self.app.app_config.set('blank_identifier', self.blank_var.get())
         self.app.app_config.set('bff_mode', self.bff_mode_var.get())
         self.app.app_config.set('bff_c_factor', cfactor)
+        self.app.app_config.set('max_lib_peaks', max_lib_peaks)
+        self.app.app_config.set('ri_extrapolation', ri_extrapolation)
+        self.app.app_config.set('allow_no_blanks', bool(self.allow_no_blanks_var.get()))
         self.app.app_config.save_defaults()
 
         # v3.0.0: Always go to surrogate config screen next
@@ -2645,9 +2329,11 @@ class ExecutionScreen(BaseScreen):
         # Execution state
         self.process = None
         self.running = False
+        self._inprocess_module = None  # set while a frozen in-process run is active
 
     def on_show(self):
         """Start execution when screen is shown"""
+        self.process = None
         self.console.delete('1.0', tk.END)
         self.status_label.config(text="Initializing...")
         self.progress.start()
@@ -2667,18 +2353,21 @@ class ExecutionScreen(BaseScreen):
             self.console.config(bg="white", fg="black", insertbackground="black")
 
     def run_pipeline(self):
-        """Execute the pipeline"""
+        """Execute the pipeline (worker thread).
+
+        Non-frozen: spawns `python -u gcms_pipeline.py ...` and streams its
+        stdout. Frozen (PyInstaller, sys.executable is K2.exe): imports
+        gcms_pipeline and calls main(argv, output=...) in-process, with
+        the pipeline's prints routed to the console via a callback.
+        """
         try:
-            # Build command
+            # Build the argument list for gcms_pipeline (no interpreter
+            # prefix; that is added only on the subprocess path).
             config = self.app.pipeline_config
             pipeline_script = Path(__file__).parent / "gcms_pipeline.py"
+            frozen = getattr(sys, 'frozen', False)
 
-            # `-u` puts the child Python into unbuffered mode. Without
-            # this, gcms_pipeline.py's print() calls go through Python's
-            # default block-buffered stdout on Windows, so the GUI
-            # console stays blank for minutes while the subprocess
-            # accumulates ~4 KB of output before flushing.
-            cmd = [sys.executable, "-u", str(pipeline_script)]
+            cmd = []
 
             # Add entry point
             entry_point = config['entry_point']
@@ -2692,10 +2381,17 @@ class ExecutionScreen(BaseScreen):
             # Add other parameters
             cmd.extend(['--name', config['project_name']])
             cmd.extend(['--threads', str(config['mzmine_threads'])])
+            if config.get('mzmine_serial_import'):
+                # v3.1.0: serialise mzML import (was silently always on)
+                cmd.extend(['--mzmine-import-threads', '1'])
             cmd.extend(['--library', config['library_path']])
             cmd.extend(['--blank-id', config['blank_identifier']])
             cmd.extend(['--bff-mode', config.get('bff_mode', 'standard')])
             cmd.extend(['--bff-c-factor', str(config.get('bff_c_factor', 5.0))])
+            cmd.extend(['--max-lib-peaks', str(int(config.get('max_lib_peaks', 20)))])  # v3.1.0
+            cmd.extend(['--ri-extrapolation', str(config.get('ri_extrapolation', 'spline'))])  # v3.1.0
+            if config.get('allow_no_blanks'):
+                cmd.append('--allow-no-blanks')  # v3.1.0
             cmd.extend(['--output', config['output_folder']])
 
             # External-tool path overrides (v3.0.11). Without these the
@@ -2716,8 +2412,10 @@ class ExecutionScreen(BaseScreen):
             if config.get('ri_cal_path'):
                 cmd.extend(['--ri-cal', config['ri_cal_path']])
 
-            if config.get('epa_api_key'):
-                cmd.extend(['--api-key', config['epa_api_key']])
+            # v3.1.0: the API key is passed through the environment
+            # (K2_EPA_API_KEY), never on the command line, so it cannot
+            # show up in the console echo, log files or process listings.
+            api_key = (config.get('epa_api_key') or '').strip()
 
             # Add grouping
             if config.get('sample_grouping'):
@@ -2761,47 +2459,103 @@ class ExecutionScreen(BaseScreen):
                     ref_samples = ','.join(surrogate_config['reference_samples'])
                     cmd.extend(['--reference-samples', ref_samples])
 
-            self.log_console(f"Command: {' '.join(cmd)}\n\n")
+            # Echo the exact command (list2cmdline quotes arguments with
+            # spaces so it can be copy-pasted). No secret is in it.
+            if frozen:
+                echo = subprocess.list2cmdline(['gcms_pipeline (in-process)'] + cmd)
+            else:
+                full_cmd = [sys.executable, "-u", str(pipeline_script)] + cmd
+                echo = subprocess.list2cmdline(full_cmd)
+            self.log_console(f"Command: {echo}\n")
+            if api_key:
+                self.log_console(f"(EPA API key passed via {API_KEY_ENV}, not shown)\n")
+            self.log_console("\n")
             self.update_status("Running pipeline...")
 
-            # Execute. Set PYTHONUNBUFFERED as a belt-and-braces
-            # measure alongside the -u flag above; some Python builds
-            # honor only one of the two.
-            env = os.environ.copy()
-            env["PYTHONUNBUFFERED"] = "1"
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                env=env,
-            )
+            if frozen:
+                # PyInstaller build: sys.executable is K2.exe, so run the
+                # pipeline in this process. Its prints are delivered to
+                # the console through the `output` callback.
+                import gcms_pipeline
+                self._inprocess_module = gcms_pipeline
+                saved_key = os.environ.get(API_KEY_ENV)
+                if api_key:
+                    os.environ[API_KEY_ENV] = api_key
+                try:
+                    returncode = gcms_pipeline.main(cmd, output=self.log_console)
+                finally:
+                    if saved_key is None:
+                        os.environ.pop(API_KEY_ENV, None)
+                    else:
+                        os.environ[API_KEY_ENV] = saved_key
+                    self._inprocess_module = None
+            else:
+                # `-u` puts the child Python into unbuffered mode. Without
+                # this, gcms_pipeline.py's print() calls go through Python's
+                # default block-buffered stdout on Windows, so the GUI
+                # console stays blank for minutes while the subprocess
+                # accumulates ~4 KB of output before flushing. Set
+                # PYTHONUNBUFFERED as a belt-and-braces measure alongside
+                # the -u flag; some Python builds honor only one of the two.
+                env = os.environ.copy()
+                env["PYTHONUNBUFFERED"] = "1"
+                if api_key:
+                    env[API_KEY_ENV] = api_key
+                else:
+                    env.pop(API_KEY_ENV, None)
+                # New process group / session so Cancel can kill the whole
+                # tree (gcms_pipeline -> MZmine JVM / MSConvert / cli.py).
+                if os.name == 'nt':
+                    popen_extra = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
+                else:
+                    popen_extra = {'start_new_session': True}
+                self.process = subprocess.Popen(
+                    full_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    env=env,
+                    **popen_extra,
+                )
 
-            # Stream output
-            for line in self.process.stdout:
-                if not self.running:
-                    break
-                self.log_console(line)
+                # Stream output
+                for line in self.process.stdout:
+                    if not self.running:
+                        break
+                    self.log_console(line)
 
-            self.process.wait()
+                self.process.wait()
+                returncode = self.process.returncode
 
-            if self.process.returncode == 0:
+            if not self.running:
+                # Cancelled by the user; cancel_execution already logged it.
+                self.after(0, lambda: self.on_completion(success=False))
+                return
+
+            if returncode == 0:
                 self.update_status("Analysis Complete!")
                 self.log_console("\n✓ Analysis completed successfully!\n")
-                self.on_completion(success=True)
+                self.after(0, lambda: self.on_completion(success=True))
+            elif returncode == 2:
+                # v3.1.0: completed, but zero Level-2 matches. Summaries
+                # were written; treat as success-with-warning.
+                self.update_status("Analysis Complete (no Level-2 matches)")
+                self.log_console("\n! Analysis completed, but no Level-2 matches were found.\n"
+                                 "  Feature summaries and the run log were still written.\n")
+                self.after(0, lambda: self.on_completion(success=True, warning="no matches"))
             else:
                 self.update_status("Analysis Failed")
-                self.log_console(f"\n✗ Analysis failed with exit code {self.process.returncode}\n")
-                self.on_completion(success=False)
+                self.log_console(f"\n✗ Analysis failed with exit code {returncode}\n")
+                self.after(0, lambda: self.on_completion(success=False))
 
         except Exception as e:
             self.update_status("Error")
             self.log_console(f"\n✗ Error: {str(e)}\n")
-            self.on_completion(success=False)
+            self.after(0, lambda: self.on_completion(success=False))
 
     def log_console(self, text):
-        """Add text to console"""
+        """Add text to console (safe to call from any thread)"""
         def update():
             self.console.insert(tk.END, text)
             self.console.see(tk.END)
@@ -2812,8 +2566,9 @@ class ExecutionScreen(BaseScreen):
         """Update status label"""
         self.status_label.after(0, lambda: self.status_label.config(text=text))
 
-    def on_completion(self, success):
-        """Handle completion"""
+    def on_completion(self, success, warning=None):
+        """Handle completion. Must run on the Tk main thread — callers on
+        the worker thread schedule it with self.after(0, ...)."""
         self.progress.stop()
         self.cancel_btn.config(state='disabled')
 
@@ -2832,7 +2587,7 @@ class ExecutionScreen(BaseScreen):
             results_base = output_folder / "results"
             if results_base.exists():
                 # Find the most recent subfolder matching project_name
-                subfolders = [d for d in results_base.iterdir() if d.is_dir() and d.name.startswith(project_name)]
+                subfolders = [d for d in results_base.iterdir() if d.is_dir() and d.name.startswith(results_dir_prefix(project_name))]
                 if subfolders:
                     # Sort by modification time to get the newest one
                     latest_results_dir = max(subfolders, key=os.path.getmtime)
@@ -2869,10 +2624,42 @@ class ExecutionScreen(BaseScreen):
                         self.app.project.set_results(csv_file, pdf_file, match_count)
                         self.app.save_project() # Auto-save on completion
 
+            if warning == "no matches":
+                messagebox.showwarning(
+                    "No Level-2 matches",
+                    "The pipeline completed, but no Level-2 matches were found.\n\n"
+                    "Feature summaries and pipeline_log.txt were written to the "
+                    "results folder. See the console output for the reasons "
+                    "(BFF filtering, thresholds, RI window)."
+                )
+
     def cancel_execution(self):
-        """Cancel running execution"""
+        """Cancel running execution.
+
+        v3.1.0: kills the whole process tree (gcms_pipeline and the MZmine
+        JVM / MSConvert / cli.py it spawned), not just the middle process.
+        In the frozen build the pipeline runs in-process, so we ask it to
+        stop and it kills its own external-tool children.
+        """
+        cancelled = False
         if self.process and self.process.poll() is None:
-            self.process.terminate()
+            try:
+                from gcms_pipeline import kill_process_tree
+                kill_process_tree(self.process)
+            except Exception:
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
+            cancelled = True
+        module = getattr(self, '_inprocess_module', None)
+        if module is not None:
+            try:
+                module.request_cancel()
+                cancelled = True
+            except Exception:
+                pass
+        if cancelled:
             self.running = False
             self.update_status("Cancelled")
             self.log_console("\n✗ Analysis cancelled by user\n")
@@ -3080,7 +2867,7 @@ class ResultsScreen(BaseScreen):
             results_base = output_folder / "results"
             
             if results_base.exists():
-                subfolders = [d for d in results_base.iterdir() if d.is_dir() and d.name.startswith(project_name)]
+                subfolders = [d for d in results_base.iterdir() if d.is_dir() and d.name.startswith(results_dir_prefix(project_name))]
                 if subfolders:
                     latest_results_dir = max(subfolders, key=os.path.getmtime)
                     csv_files = list(latest_results_dir.glob("*.csv"))
@@ -3169,8 +2956,8 @@ class ResultsScreen(BaseScreen):
         surrogate_csv = None
         if results_base.exists():
             # Look for SurrogateRecoveries_*.csv
-            csv_pattern = f"SurrogateRecoveries_{project_name}*.csv"
-            subfolders = [d for d in results_base.iterdir() if d.is_dir() and d.name.startswith(project_name)]
+            csv_pattern = f"SurrogateRecoveries_{results_dir_prefix(project_name)}*.csv"
+            subfolders = [d for d in results_base.iterdir() if d.is_dir() and d.name.startswith(results_dir_prefix(project_name))]
             if subfolders:
                 latest_results_dir = max(subfolders, key=os.path.getmtime)
                 surrogate_files = list(latest_results_dir.glob("SurrogateRecoveries*.csv"))
@@ -3450,16 +3237,19 @@ class ResultsScreen(BaseScreen):
         grouping = self.app.pipeline_config.get('sample_grouping')
         if not grouping:
             grouping = self.app.project.get('pipeline_config', {}).get('sample_grouping', {})
-        
+        # v3.1.0: look up by normalised name so "X.mzML Peak area" style
+        # column names and file-stem keys resolve to the same entry.
+        grouping_norm = {normalise_sample_name(k): v for k, v in (grouping or {}).items()}
+
         # v2.8.0: Check if IS normalization was used
         is_enabled = match.get('IS_Normalized', 'No') == 'Yes'
-        
+
         display_data = [] # List of (name, type, abundance, is_area, is_norm_factor)
-        
+
         for fld in abundance_fields:
             s_name = fld.replace('Abundance_', '')
             val = float(match.get(fld, 0))
-            stype = grouping.get(s_name, {}).get('type', 'Sample')
+            stype = grouping_norm.get(normalise_sample_name(s_name), {}).get('type', 'Sample')
             
             # v2.8.0: Get IS area and normalization factor if available
             is_area = ""

@@ -34,6 +34,18 @@ PRESET_EXCLUDED_KEYS = (
     'window_geometry',
 )
 
+# Keys stripped from the pipeline_config block of a saved .K2 project file
+# (v3.1.0). The API key is a secret and must never be persisted alongside
+# shareable project data; it lives only in the running session and in
+# ~/.k2/credentials.json (see K2Config.save_defaults).
+PROJECT_EXCLUDED_KEYS = (
+    'epa_api_key',
+)
+
+# Name of the environment variable through which the GUI/pipeline hand the
+# EPA CompTox API key to cli.py (never on a command line).
+API_KEY_ENV = 'K2_EPA_API_KEY'
+
 
 class K2Config:
     """Manages user preferences and configuration presets"""
@@ -46,12 +58,21 @@ class K2Config:
             'mzmine_user_file': '',
             'mzmine_batch_file': '',
             'mzmine_threads': 2,
+            # v3.1.0: when True the GUI passes --mzmine-import-threads 1
+            # (serialised mzML import; more stable on Windows, slower).
+            'mzmine_serial_import': False,
             'library_path': '',
             'ri_cal_path': '',
             'epa_api_key': '',
             'blank_identifier': 'fieldblank',
             'bff_mode': 'standard',
             'bff_c_factor': 5.0,
+            # v3.1.0: library peak trimming (--max-lib-peaks; 0 = disabled)
+            'max_lib_peaks': 20,
+            # v3.1.0: RI extrapolation mode outside the alkane range
+            'ri_extrapolation': 'spline',
+            # v3.1.0: permit runs with zero blank samples (--allow-no-blanks)
+            'allow_no_blanks': False,
             'last_input_folder': '',
             'last_output_folder': '',
             'window_geometry': '1400x900',
@@ -62,8 +83,11 @@ class K2Config:
         self.first_run = False
 
         # User config file location
+        self.credentials_file = None
         if config_file:
             self.config_file = Path(config_file)
+            # v3.1.0: secrets live next to the config file, never inside it
+            self.credentials_file = self.config_file.parent / 'credentials.json'
         else:
             # Default location in user's home directory
             home = Path.home()
@@ -73,6 +97,7 @@ class K2Config:
                 self.first_run = True
             
             self.config_file = self.config_dir / 'k2_defaults.json'
+            self.credentials_file = self.config_dir / 'credentials.json'
             if not self.config_file.exists():
                 self.first_run = True
 
@@ -94,6 +119,17 @@ class K2Config:
                     print(f"Loaded defaults from {self.config_file}")
             except Exception as e:
                 print(f"Warning: Could not load defaults: {e}")
+        # v3.1.0: the API key is kept in a separate credentials file. A key
+        # found in an older k2_defaults.json is still honoured here and is
+        # migrated out of that file on the next save_defaults().
+        if self.credentials_file is not None and self.credentials_file.exists():
+            try:
+                with open(self.credentials_file, 'r') as f:
+                    creds = json.load(f)
+                if isinstance(creds, dict) and creds.get('epa_api_key'):
+                    self.config['epa_api_key'] = creds['epa_api_key']
+            except Exception as e:
+                print(f"Warning: Could not load credentials: {e}")
         self._prune_invalid_paths()
 
     def _prune_invalid_paths(self):
@@ -116,13 +152,41 @@ class K2Config:
                   f"{', '.join(cleared)}")
 
     def save_defaults(self):
-        """Save current configuration as defaults"""
+        """Save current configuration as defaults.
+
+        v3.1.0: the EPA API key is never written to k2_defaults.json. It is
+        stored in a separate ~/.k2/credentials.json (or removed from it
+        when blank) so the defaults file can be shared or attached to bug
+        reports without leaking the secret.
+        """
         try:
+            public = {k: v for k, v in self.config.items() if k != 'epa_api_key'}
             with open(self.config_file, 'w') as f:
-                json.dump(self.config, f, indent=2)
+                json.dump(public, f, indent=2)
             print(f"Saved defaults to {self.config_file}")
         except Exception as e:
             print(f"Error saving defaults: {e}")
+
+        if self.credentials_file is None:
+            return
+        api_key = self.config.get('epa_api_key', '') or ''
+        try:
+            if api_key:
+                creds = {
+                    '_comment': 'K2 Annotator credentials. This file holds '
+                                'your EPA CompTox API key in plain text; do '
+                                'not share it. Delete the file (or clear the '
+                                'key in the GUI) to forget the key. The same '
+                                'key can instead be supplied via the '
+                                f'{API_KEY_ENV} environment variable.',
+                    'epa_api_key': api_key,
+                }
+                with open(self.credentials_file, 'w') as f:
+                    json.dump(creds, f, indent=2)
+            elif self.credentials_file.exists():
+                self.credentials_file.unlink()
+        except Exception as e:
+            print(f"Error saving credentials: {e}")
 
     def get(self, key, default=None):
         """Get configuration value"""
@@ -220,12 +284,22 @@ class K2Project:
         })
 
     def save(self, filepath):
-        """Save project to .K2 file"""
+        """Save project to .K2 file.
+
+        v3.1.0: secrets (PROJECT_EXCLUDED_KEYS, i.e. the EPA API key) are
+        stripped from pipeline_config before writing so a .K2 file can be
+        shared freely.
+        """
         self.project_data['modified'] = datetime.now().isoformat()
 
         try:
+            data = dict(self.project_data)
+            cfg = data.get('pipeline_config')
+            if isinstance(cfg, dict):
+                data['pipeline_config'] = {k: v for k, v in cfg.items()
+                                           if k not in PROJECT_EXCLUDED_KEYS}
             with open(filepath, 'w') as f:
-                json.dump(self.project_data, f, indent=2)
+                json.dump(data, f, indent=2)
             return True
         except Exception as e:
             print(f"Error saving project: {e}")

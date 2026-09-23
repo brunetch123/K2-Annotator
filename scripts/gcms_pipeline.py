@@ -18,18 +18,27 @@ Usage:
 """
 
 import argparse
+import inspect
 import os
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 
 # ============================================================================
 # Configuration - Edit these paths for your system
 # ============================================================================
-PIPELINE_ROOT = Path(__file__).resolve().parent.parent  # Auto-detect pipeline root
+if getattr(sys, 'frozen', False):
+    # v3.1.0: inside a PyInstaller bundle the bundled scripts/ and src/
+    # copies live under sys._MEIPASS, not two levels above this module.
+    PIPELINE_ROOT = Path(sys._MEIPASS)
+else:
+    PIPELINE_ROOT = Path(__file__).resolve().parent.parent  # Auto-detect pipeline root
 MSCONVERT = PIPELINE_ROOT / "software" / "pwiz-bin" / "msconvert.exe"
 MZMINE = PIPELINE_ROOT / "software" / "mzmine" / "mzmine_console.exe"
 USER_FILE = PIPELINE_ROOT / "users" / "default.mzuser"
@@ -38,6 +47,211 @@ TEMP_DIR = PIPELINE_ROOT / "temp"
 DEFAULT_LIBRARY = PIPELINE_ROOT / "unified_library_20251013.csv"
 SCRIPTS_DIR = PIPELINE_ROOT / "scripts"
 DEFAULT_THREADS = 2
+
+# Exit code returned when the run completed but cli.py found zero Level-2
+# matches (summaries are still written). Mirrors cli.py's own exit code.
+EXIT_NO_MATCHES = 2
+
+# Environment variable through which the EPA CompTox API key is handed to
+# cli.py (v3.1.0). Never placed on a command line so it cannot leak into
+# process listings, GUI console echoes or log files.
+API_KEY_ENV = "K2_EPA_API_KEY"
+
+
+# ============================================================================
+# v3.1.0 plumbing helpers: log tee, cancellation, process-tree kill,
+# command redaction, name sanitising, unique output directories.
+# ============================================================================
+class _Tee:
+    """Minimal file-like object that fans writes out to several sinks.
+
+    Sinks may be file objects (anything with .write) or plain callables
+    (called with the text chunk). A sink of None is ignored, which covers
+    PyInstaller windowed builds where sys.stdout is None.
+    """
+
+    def __init__(self, *sinks):
+        self._sinks = [s for s in sinks if s is not None]
+        self._lock = threading.Lock()
+
+    def write(self, text):
+        if not text:
+            return 0
+        with self._lock:
+            for sink in self._sinks:
+                try:
+                    if callable(sink) and not hasattr(sink, 'write'):
+                        sink(text)
+                    else:
+                        sink.write(text)
+                except Exception:
+                    pass
+        return len(text)
+
+    def flush(self):
+        for sink in self._sinks:
+            try:
+                if hasattr(sink, 'flush'):
+                    sink.flush()
+            except Exception:
+                pass
+
+    def isatty(self):
+        return False
+
+    @property
+    def encoding(self):
+        return 'utf-8'
+
+
+class _StdoutRedirect:
+    """Context manager: route sys.stdout/sys.stderr through a _Tee that
+    also feeds `extra` (a file object or callable), restoring on exit."""
+
+    def __init__(self, extra):
+        self._extra = extra
+        self._saved = None
+
+    def __enter__(self):
+        self._saved = (sys.stdout, sys.stderr)
+        sys.stdout = _Tee(self._saved[0], self._extra)
+        sys.stderr = _Tee(self._saved[1], self._extra)
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+        sys.stdout, sys.stderr = self._saved
+        return False
+
+
+# Cancellation support for in-process (frozen GUI) runs: the GUI cannot
+# kill a thread, so it sets this event and we kill whatever external tool
+# is currently running and stop between stages.
+_CANCEL = threading.Event()
+_CHILDREN = set()
+_CHILDREN_LOCK = threading.Lock()
+
+
+def _register_child(proc):
+    with _CHILDREN_LOCK:
+        _CHILDREN.add(proc)
+
+
+def _unregister_child(proc):
+    with _CHILDREN_LOCK:
+        _CHILDREN.discard(proc)
+
+
+def kill_process_tree(proc):
+    """Kill `proc` and every descendant.
+
+    Windows: `taskkill /T /F` walks the tree (MZmine spawns a JVM, MSConvert
+    may spawn helpers). Elsewhere: os.killpg on the process group, which is
+    why callers launch children with start_new_session=True.
+    """
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        if os.name == 'nt':
+            subprocess.run(
+                ['taskkill', '/T', '/F', '/PID', str(proc.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            )
+        else:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def request_cancel():
+    """Ask a running in-process pipeline to stop (used by the frozen GUI)."""
+    _CANCEL.set()
+    with _CHILDREN_LOCK:
+        children = list(_CHILDREN)
+    for proc in children:
+        kill_process_tree(proc)
+
+
+def _reset_cancel():
+    _CANCEL.clear()
+
+
+def _popen_kwargs():
+    """Popen keyword arguments so a child (and its descendants) can be
+    killed as a tree by kill_process_tree()."""
+    if os.name == 'nt':
+        return {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {'start_new_session': True}
+
+
+def redact_command(cmd):
+    """Return a copy-pasteable command string with secrets masked.
+
+    Uses subprocess.list2cmdline so arguments containing spaces are quoted
+    exactly as the shell needs them. Any value following --api-key / -k is
+    replaced by '***'.
+    """
+    cmd = [str(c) for c in cmd]
+    out = []
+    mask_next = False
+    for tok in cmd:
+        if mask_next:
+            out.append('***')
+            mask_next = False
+        elif tok in ('--api-key', '-k'):
+            out.append(tok)
+            mask_next = True
+        elif tok.startswith('--api-key='):
+            out.append('--api-key=***')
+        else:
+            out.append(tok)
+    return subprocess.list2cmdline(out)
+
+
+def sanitise_name(name):
+    """Make `name` safe as a single path component.
+
+    Characters outside [A-Za-z0-9._-] become '_'. A name that sanitises to
+    nothing (or only dots) becomes 'run'.
+    """
+    cleaned = re.sub(r'[^A-Za-z0-9._-]', '_', str(name).strip())
+    if not cleaned or set(cleaned) <= {'.'}:
+        cleaned = 'run'
+    return cleaned
+
+
+def unique_run_name(base_output, run_name, stages):
+    """Return `run_name`, or `run_name_2`, `run_name_3`, ... — the first
+    variant for which none of the stage output directories already exist.
+
+    Never overwrites an earlier run: the GUI always passes --name, so
+    without this a re-run would silently clobber results/<name>.
+    """
+    def _dirs(candidate):
+        dirs = [base_output / "results" / candidate]
+        if 'convert' in stages:
+            dirs.append(base_output / "converted" / candidate)
+        if 'mzmine' in stages:
+            dirs.append(base_output / "mzmine_output" / candidate)
+        return dirs
+
+    if not any(d.exists() for d in _dirs(run_name)):
+        return run_name
+    n = 2
+    while any(d.exists() for d in _dirs(f"{run_name}_{n}")):
+        n += 1
+    return f"{run_name}_{n}"
 
 
 def print_header(text):
@@ -188,24 +402,29 @@ def find_mzmine_outputs(input_folder):
     Find MZmine output files (quant CSV and spectra MSP).
     Returns tuple of (quant_file, msp_file) or (None, None) if not found.
     """
-    # Look for quant file patterns
-    quant_patterns = ["*_quant.csv", "*_iimn_gnps.csv", "*quant*.csv", "*.csv"]
-    quant_file = None
-    for pattern in quant_patterns:
-        matches = list(input_folder.glob(pattern))
-        if matches:
-            quant_file = matches[0]
-            break
-    
-    # Look for MSP file
-    msp_patterns = ["*_spectra.msp", "*.msp"]
-    msp_file = None
-    for pattern in msp_patterns:
-        matches = list(input_folder.glob(pattern))
-        if matches:
-            msp_file = matches[0]
-            break
-    
+    # v3.1.0: glob order is filesystem-dependent, so pick deterministically:
+    # newest file first (by mtime, name as tie-break) and warn when the
+    # choice was ambiguous.
+    def _pick(patterns, label):
+        for pattern in patterns:
+            matches = list(input_folder.glob(pattern))
+            if not matches:
+                continue
+            matches.sort(key=lambda p: (p.stat().st_mtime, p.name),
+                         reverse=True)
+            if len(matches) > 1:
+                print(f"  WARNING: {len(matches)} candidate {label} files "
+                      f"match '{pattern}' in {input_folder}; using the "
+                      f"newest: {matches[0].name}", flush=True)
+                for other in matches[1:]:
+                    print(f"           (ignored: {other.name})", flush=True)
+            return matches[0]
+        return None
+
+    quant_file = _pick(["*_quant.csv", "*_iimn_gnps.csv", "*quant*.csv", "*.csv"],
+                       "quant CSV")
+    msp_file = _pick(["*_spectra.msp", "*.msp"], "MSP")
+
     return quant_file, msp_file
 
 
@@ -272,6 +491,10 @@ def run_conversion(input_folder, output_folder, stage_locally=True):
 
             # Stream MSConvert output line-by-line rather than
             # capturing it to a buffer; we want live progress.
+            if _CANCEL.is_set():
+                print("    Cancelled.", flush=True)
+                return None
+
             try:
                 proc = subprocess.Popen(
                     cmd,
@@ -279,6 +502,7 @@ def run_conversion(input_folder, output_folder, stage_locally=True):
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
+                    **_popen_kwargs(),
                 )
             except OSError as e:
                 if getattr(e, "winerror", None) == 362:
@@ -294,11 +518,19 @@ def run_conversion(input_folder, output_folder, stage_locally=True):
                     return None
                 raise
 
-            for line in proc.stdout:
-                line = line.rstrip()
-                if line:
-                    print(f"    [msconvert] {line}", flush=True)
-            proc.wait()
+            _register_child(proc)
+            try:
+                for line in proc.stdout:
+                    line = line.rstrip()
+                    if line:
+                        print(f"    [msconvert] {line}", flush=True)
+                proc.wait()
+            finally:
+                _unregister_child(proc)
+
+            if _CANCEL.is_set():
+                print("    Cancelled.", flush=True)
+                return None
 
             if proc.returncode != 0:
                 print(f"    ERROR: Conversion failed (exit code "
@@ -341,8 +573,13 @@ def run_conversion(input_folder, output_folder, stage_locally=True):
 # Stage 2: MZmine Processing
 # ============================================================================
 def run_mzmine(input_folder, output_folder, output_name, threads,
-               mzmine_temp=None, memory_mode="none", import_threads=1):
+               mzmine_temp=None, memory_mode="none", import_threads=None,
+               log_file=None):
     """Run MZmine batch processing.
+
+    `log_file` (optional Path, v3.1.0): the complete, unfiltered MZmine
+    stdout/stderr is written here (the console only shows a filtered
+    view). The GUI passes <results_dir>/mzmine_log.txt.
 
     Parameters that matter for the import-stability story:
 
@@ -373,18 +610,18 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
     fallback. If you hit JVM commit-memory failures on a Windows
     machine with a small page file, try "all" or "masses_features".
 
-    `import_threads` (int, default 1): used to override `-threads`
-    for the duration of MZmine's run. Concurrent mzML import threads
-    share the same rotating `mzmine.tmp` scratch file; when one
+    `import_threads` (int or None, default None): optional cap on
+    `-threads` for the duration of MZmine's run. Concurrent mzML import
+    threads share the same rotating `mzmine.tmp` scratch file; when one
     thread rotates the file mid-write, the other thread's mmap is
-    invalidated and the JVM faults inside `Unsafe`. Single-threaded
-    import is dramatically more stable on Windows for this reason,
-    and the speed cost is small (mzML parse is I/O-bound). The
-    overall `threads` parameter is still passed to MZmine for the
-    parallelisable post-import steps; only the import phase is
-    serialised. (In practice MZmine does not let us split these on
-    the CLI, so we pass `min(threads, import_threads)` for the
-    whole run; raise import_threads if you want the old behavior.)
+    invalidated and the JVM faults inside `Unsafe`. Passing 1 here
+    serialises the import, which is dramatically more stable on Windows,
+    at a small speed cost (mzML parse is I/O-bound). MZmine does not let
+    us split import/post-import thread counts on the CLI, so the cap
+    applies to the whole run: we pass `min(threads, import_threads)`.
+    With None (the default since v3.1.0) `threads` is used unchanged —
+    previously the default of 1 silently overrode the requested thread
+    count, so the GUI's "Thread Count" had no effect.
     """
     output_folder.mkdir(parents=True, exist_ok=True)
 
@@ -415,9 +652,12 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
     input_pattern = str(input_folder / "*.mzML")
     output_base = output_folder / output_name
 
-    # Serialise parallel mzML import to avoid the rotating-tmp-file
-    # mmap fault. See docstring above.
-    effective_threads = max(1, min(int(threads), int(import_threads)))
+    # Optionally cap the thread count (e.g. 1 to serialise mzML import and
+    # avoid the rotating-tmp-file mmap fault). See docstring above.
+    if import_threads is None:
+        effective_threads = max(1, int(threads))
+    else:
+        effective_threads = max(1, min(int(threads), int(import_threads)))
 
     # Pre-flight disk-space check against the scratch directory.
     # MZmine memory-maps mzML data into rotating temp files under
@@ -518,11 +758,32 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
     ]
 
     # Print the exact command so the user can reproduce manually if
-    # something goes wrong below.
-    print(f"MZmine command: {' '.join(cmd)}", flush=True)
+    # something goes wrong below (list2cmdline quotes paths with spaces).
+    print(f"MZmine command: {subprocess.list2cmdline(cmd)}", flush=True)
     print(flush=True)
+    if log_file is not None:
+        print(f"Full MZmine log: {log_file}", flush=True)
     print("MZmine log (filtered):", flush=True)
     print("-" * 40, flush=True)
+
+    if _CANCEL.is_set():
+        print("Cancelled.", flush=True)
+        if scratch_is_owned and mzmine_scratch.exists():
+            shutil.rmtree(mzmine_scratch, ignore_errors=True)
+        return None
+
+    # v3.1.0: keep the complete MZmine output on disk, untruncated.
+    log_fh = None
+    if log_file is not None:
+        try:
+            Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+            log_fh = open(log_file, 'w', encoding='utf-8', errors='replace')
+            log_fh.write(f"# MZmine command: {subprocess.list2cmdline(cmd)}\n")
+            log_fh.write(f"# Started: {datetime.now().isoformat()}\n\n")
+        except OSError as e:
+            print(f"  WARNING: could not open MZmine log file {log_file}: {e}",
+                  flush=True)
+            log_fh = None
 
     try:
         try:
@@ -531,7 +792,8 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                **_popen_kwargs(),
             )
         except OSError as e:
             # WinError 362 = ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING.
@@ -552,20 +814,36 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
         all_lines = deque(maxlen=TAIL_LINES)
         error_lines = []
 
-        for line in process.stdout:
-            line = line.rstrip()
-            all_lines.append(line)
-            if any(tok in line for tok in
-                   ("SEVERE", "ERROR", "Exception", "Caused by", "Traceback")):
-                print(line, flush=True)
-                error_lines.append(line)
-            elif any(level in line for level in ("INFO", "WARNING")):
-                if len(line) > 100:
-                    line = line[:97] + "..."
-                print(line, flush=True)
+        _register_child(process)
+        try:
+            for line in process.stdout:
+                line = line.rstrip()
+                if log_fh is not None:
+                    log_fh.write(line + "\n")
+                all_lines.append(line)
+                if any(tok in line for tok in
+                       ("SEVERE", "ERROR", "Exception", "Caused by", "Traceback")):
+                    print(line, flush=True)
+                    error_lines.append(line)
+                elif any(level in line for level in ("INFO", "WARNING")):
+                    if len(line) > 100:
+                        line = line[:97] + "..."
+                    print(line, flush=True)
 
-        process.wait()
+            process.wait()
+        finally:
+            _unregister_child(process)
+            if log_fh is not None:
+                try:
+                    log_fh.write(f"\n# Exit code: {process.returncode}\n")
+                    log_fh.close()
+                except OSError:
+                    pass
         print("-" * 40, flush=True)
+
+        if _CANCEL.is_set():
+            print("Cancelled.", flush=True)
+            return None
 
         if process.returncode != 0:
             print(f"\nERROR: MZmine processing failed (exit code "
@@ -734,11 +1012,63 @@ def run_mzmine(input_folder, output_folder, output_name, threads,
 # ============================================================================
 # Stage 3: Library Matching
 # ============================================================================
+def _run_cli_in_process(cli_args, env):
+    """Invoke scripts/cli.py's main() inside this interpreter.
+
+    Used by the PyInstaller build, where sys.executable is K2.exe and
+    spawning `python cli.py` is impossible. cli.main() may accept an
+    argv list (v3.1.0) or read sys.argv; both are handled. cli.py
+    signals its result with sys.exit(), so SystemExit is translated
+    back into an integer return code (0 ok, 2 no matches, 1 error).
+    """
+    scripts_dir = str(SCRIPTS_DIR)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import cli  # noqa: E402  (scripts/cli.py)
+
+    saved_env = {k: os.environ.get(k) for k in env}
+    os.environ.update(env)
+    saved_argv = sys.argv
+    sys.argv = ['cli.py'] + list(cli_args)
+    try:
+        try:
+            params = inspect.signature(cli.main).parameters
+        except (TypeError, ValueError):
+            params = {}
+        try:
+            if params:
+                rc = cli.main(list(cli_args))
+            else:
+                rc = cli.main()
+        except SystemExit as e:
+            rc = e.code
+        if rc is None:
+            rc = 0
+        if not isinstance(rc, int):
+            print(str(rc), flush=True)
+            rc = 1
+        return rc
+    finally:
+        sys.argv = saved_argv
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 def run_library_matching(mzmine_folder, output_folder, project_name, library_file,
                          blank_id, ri_cal=None, api_key=None, grouping=None, is_config=None,
                          surrogate_library=None, surrogate_config=None, reference_samples=None,
-                         bff_mode='standard', bff_c_factor=5.0, max_lib_peaks=20):
-    """Run library matching using cli.py."""
+                         bff_mode='standard', bff_c_factor=5.0, max_lib_peaks=20,
+                         ri_extrapolation='spline', allow_no_blanks=False):
+    """Run library matching using cli.py.
+
+    Returns (output_folder, cli_exit_code) on completion, where the exit
+    code is 0 (matches found) or EXIT_NO_MATCHES (2: the run completed
+    but no Level-2 matches were found; summaries are still written).
+    Returns None on failure.
+    """
 
     # Find MZmine output files
     quant_file, msp_file = find_mzmine_outputs(mzmine_folder)
@@ -758,6 +1088,10 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
     print(f"Blank ID:   '{blank_id}'")
     print(f"BFF Mode:   {bff_mode}")
     print(f"BFF c:      {bff_c_factor}")
+    print(f"Max lib peaks: {max_lib_peaks}")
+    print(f"RI extrapolation: {ri_extrapolation}")
+    if allow_no_blanks:
+        print(f"Allow no blanks: yes")
     if ri_cal:
         print(f"RI Cal:     {ri_cal}")
     if grouping:
@@ -777,22 +1111,24 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
         print(f"ERROR: Library file not found: {library_file}")
         return None
     
+    frozen = getattr(sys, 'frozen', False)
+
     # Build command for cli.py
     cli_script = SCRIPTS_DIR / "cli.py"
-    
+
     if not cli_script.exists():
         # Try alternate location
         cli_script = SCRIPTS_DIR / "src" / "cli.py"
-    
-    if not cli_script.exists():
+
+    if not cli_script.exists() and not frozen:
         print(f"ERROR: cli.py not found in {SCRIPTS_DIR}")
         return None
-    
+
     output_folder.mkdir(parents=True, exist_ok=True)
-    
-    cmd = [
-        sys.executable,
-        str(cli_script),
+
+    # Arguments for cli.py (the interpreter/script prefix is added only
+    # for the subprocess path; the frozen build calls cli.main() directly).
+    cli_args = [
         "--quant", str(quant_file),
         "--msp", str(msp_file),
         "--library", str(library_file),
@@ -800,14 +1136,23 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
         "--bff-mode", bff_mode,
         "--bff-c-factor", str(bff_c_factor),
         "--max-lib-peaks", str(max_lib_peaks),  # v3.0.19
+        "--ri-extrapolation", str(ri_extrapolation),  # v3.1.0
+        "--name", str(project_name),  # v3.1.0: used for output file names
         "--output", str(output_folder)
     ]
-    
+    cmd = cli_args
+
+    if allow_no_blanks:
+        cmd.append("--allow-no-blanks")  # v3.1.0
+
     if ri_cal:
         cmd.extend(["--ri-cal", str(ri_cal)])
-    
+
+    # v3.1.0: the API key travels in the environment, never on the
+    # command line (cli.py reads K2_EPA_API_KEY as its --api-key fallback).
+    env = os.environ.copy()
     if api_key:
-        cmd.extend(["--api-key", api_key])
+        env[API_KEY_ENV] = api_key
 
     if grouping:
         cmd.extend(["--grouping", str(grouping)])
@@ -826,29 +1171,71 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
         cmd.extend(["--reference-samples", str(reference_samples)])
 
     print("Running library matching...")
+    if frozen:
+        print(f"cli.py arguments (in-process): "
+              f"{redact_command(['cli.py'] + cli_args)}")
+    else:
+        print(f"cli.py command: "
+              f"{redact_command([sys.executable, str(cli_script)] + cli_args)}")
+    if api_key:
+        print(f"(EPA API key passed via {API_KEY_ENV}, not shown)")
     print("-" * 40)
-    
-    # Run cli.py and stream output
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        cwd=str(SCRIPTS_DIR)  # Run from scripts directory
-    )
-    
-    for line in process.stdout:
-        print(line.rstrip())
-    
-    process.wait()
-    print("-" * 40)
-    
-    if process.returncode != 0:
-        print("ERROR: Library matching failed")
+
+    if _CANCEL.is_set():
+        print("Cancelled.")
         return None
-    
-    return output_folder
+
+    if frozen:
+        # PyInstaller build: sys.executable is K2.exe, so run cli.py's
+        # main() in this interpreter instead of spawning a child.
+        try:
+            returncode = _run_cli_in_process(cli_args, {API_KEY_ENV: api_key}
+                                             if api_key else {})
+        except Exception as e:
+            print(f"ERROR: Library matching raised {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    else:
+        # Run cli.py and stream output
+        process = subprocess.Popen(
+            [sys.executable, "-u", str(cli_script)] + cli_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            cwd=str(SCRIPTS_DIR),  # Run from scripts directory
+            env=env,
+            **_popen_kwargs(),
+        )
+        _register_child(process)
+        try:
+            for line in process.stdout:
+                print(line.rstrip())
+            process.wait()
+        finally:
+            _unregister_child(process)
+        returncode = process.returncode
+
+    print("-" * 40)
+
+    if _CANCEL.is_set():
+        print("Cancelled.")
+        return None
+
+    if returncode == EXIT_NO_MATCHES:
+        # v3.1.0: cli.py exits 2 when it completed but found zero
+        # Level-2 matches. Summaries were still written; this is a
+        # warning, not a failure.
+        print("WARNING: Library matching completed with NO Level-2 matches "
+              "(exit code 2). Feature summaries were still written.")
+        return output_folder, EXIT_NO_MATCHES
+
+    if returncode != 0:
+        print(f"ERROR: Library matching failed (exit code {returncode})")
+        return None
+
+    return output_folder, 0
 
 
 # ============================================================================
@@ -879,25 +1266,79 @@ def run_pipeline(args):
         print(f"ERROR: Input folder not found: {input_folder}")
         return 1
     
-    # Determine project name
+    # Determine project name. v3.1.0: --name is sanitised so it is safe
+    # as a path component (results/<name>, converted/<name>, ...).
     if args.name:
-        project_name = args.name
+        project_name = sanitise_name(args.name)
+        if project_name != args.name:
+            print(f"NOTE: project name {args.name!r} sanitised to "
+                  f"{project_name!r} for use in paths")
     else:
         project_name = input_folder.name
         # Clean up name if it's a generic folder
         if project_name.lower() in ['raw', 'raw_data', 'data', 'input']:
             project_name = input_folder.parent.name
-    
+        project_name = sanitise_name(project_name)
+
     # Add timestamp to make unique if not user-specified
     if not args.name:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         run_name = f"{project_name}_{timestamp}"
     else:
         run_name = project_name
-    
+
     # Resolve library path
     library_file = Path(args.library) if args.library else DEFAULT_LIBRARY
-    
+
+    # Define output directories
+    # Use output argument if provided, otherwise default to PIPELINE_ROOT
+    if args.output:
+        base_output = Path(args.output)
+    else:
+        base_output = PIPELINE_ROOT
+
+    # v3.1.0: never overwrite an earlier run — append _2, _3, ... when
+    # the output directories for this run name already exist.
+    unique_name = unique_run_name(base_output, run_name, stages)
+    if unique_name != run_name:
+        print(f"NOTE: output for run '{run_name}' already exists; "
+              f"using '{unique_name}' instead (never overwritten)")
+        run_name = unique_name
+
+    converted_dir = base_output / "converted" / run_name
+    mzmine_dir = base_output / "mzmine_output" / run_name
+    results_dir = base_output / "results" / run_name
+
+    # v3.1.0: tee everything the pipeline prints from here on into
+    # <results_dir>/pipeline_log.txt (K2_LOG_FILE).
+    results_dir.mkdir(parents=True, exist_ok=True)
+    log_path = results_dir / "pipeline_log.txt"
+    try:
+        log_fh = open(log_path, 'w', encoding='utf-8', errors='replace')
+    except OSError as e:
+        print(f"WARNING: could not open pipeline log {log_path}: {e}")
+        log_fh = None
+    os.environ['K2_LOG_FILE'] = str(log_path)
+
+    try:
+        with _StdoutRedirect(log_fh):
+            return _run_pipeline_stages(
+                args, input_folder, input_type, stages, project_name,
+                run_name, library_file, converted_dir, mzmine_dir,
+                results_dir, log_path)
+    finally:
+        if log_fh is not None:
+            try:
+                log_fh.close()
+            except OSError:
+                pass
+
+
+def _run_pipeline_stages(args, input_folder, input_type, stages, project_name,
+                         run_name, library_file, converted_dir, mzmine_dir,
+                         results_dir, log_path):
+    """Body of run_pipeline(), executed with stdout teed to the log file."""
+
     # Print header
     print_header("GC-MS Suspect Screening Pipeline")
 
@@ -907,12 +1348,18 @@ def run_pipeline(args):
     print(f"Run name:     {run_name}")
     print(f"Stages:       {' -> '.join(stages)}")
     print(f"Threads:      {args.threads}")
+    if getattr(args, 'mzmine_import_threads', None) is not None:
+        print(f"MZmine import thread cap: {args.mzmine_import_threads}")
+    print(f"Pipeline log: {log_path}")
     if 'match' in stages:
         print(f"Library:      {library_file}")
         print(f"Blank ID:     '{args.blank_id}'")
         print(f"BFF Mode:     {args.bff_mode}")
         print(f"BFF c-factor: {getattr(args, 'bff_c_factor', 5.0)}")
-    
+        print(f"Max lib peaks: {getattr(args, 'max_lib_peaks', 20)}")
+        print(f"RI extrapolation: {getattr(args, 'ri_extrapolation', 'spline')}")
+        print(f"Allow no blanks: {'yes' if getattr(args, 'allow_no_blanks', False) else 'no'}")
+
     # Validate setup
     print()
     if not validate_setup(stages):
@@ -939,21 +1386,11 @@ def run_pipeline(args):
             print(f"ERROR: MZmine output files not found in {input_folder}")
             return 1
         print(f"Found MZmine outputs: {quant.name}, {msp.name}")
-    
-    # Define output directories
-    # Use output argument if provided, otherwise default to PIPELINE_ROOT
-    if args.output:
-        base_output = Path(args.output)
-    else:
-        base_output = PIPELINE_ROOT
 
-    converted_dir = base_output / "converted" / run_name
-    mzmine_dir = base_output / "mzmine_output" / run_name
-    results_dir = base_output / "results" / run_name
-    
     total_steps = len(stages)
     current_step = 0
-    
+    exit_code = 0
+
     # ========================================================================
     # Stage 1: Conversion
     # ========================================================================
@@ -984,7 +1421,8 @@ def run_pipeline(args):
             mzml_input, mzmine_dir, run_name, args.threads,
             mzmine_temp=Path(args.mzmine_temp) if getattr(args, 'mzmine_temp', None) else None,
             memory_mode=getattr(args, 'mzmine_memory', 'none'),
-            import_threads=getattr(args, 'mzmine_import_threads', 1),
+            import_threads=getattr(args, 'mzmine_import_threads', None),
+            log_file=results_dir / "mzmine_log.txt",  # v3.1.0
         )
         if result is None:
             return 1
@@ -1001,7 +1439,11 @@ def run_pipeline(args):
         print_step(current_step, total_steps, "Running library matching")
         
         ri_cal = Path(args.ri_cal) if args.ri_cal else None
-        
+
+        # v3.1.0: --api-key on the CLI still works, but the environment
+        # variable is the preferred (non-leaking) channel.
+        api_key = args.api_key or os.environ.get(API_KEY_ENV) or None
+
         result = run_library_matching(
             mzmine_folder=mzmine_output,
             output_folder=results_dir,
@@ -1009,7 +1451,7 @@ def run_pipeline(args):
             library_file=library_file,
             blank_id=args.blank_id,
             ri_cal=ri_cal,
-            api_key=args.api_key,
+            api_key=api_key,
             grouping=args.grouping,
             is_config=args.is_config if hasattr(args, 'is_config') else None,
             surrogate_library=args.surrogate_library if hasattr(args, 'surrogate_library') else None,
@@ -1018,15 +1460,23 @@ def run_pipeline(args):
             bff_mode=getattr(args, 'bff_mode', 'standard'),
             bff_c_factor=getattr(args, 'bff_c_factor', 5.0),
             max_lib_peaks=getattr(args, 'max_lib_peaks', 20),  # v3.0.19
+            ri_extrapolation=getattr(args, 'ri_extrapolation', 'spline'),  # v3.1.0
+            allow_no_blanks=getattr(args, 'allow_no_blanks', False),  # v3.1.0
         )
         if result is None:
             return 1
-    
+        _, match_rc = result
+        if match_rc == EXIT_NO_MATCHES:
+            exit_code = EXIT_NO_MATCHES
+
     # ========================================================================
     # Complete
     # ========================================================================
-    print_header("Pipeline Complete!")
-    
+    if exit_code == EXIT_NO_MATCHES:
+        print_header("Pipeline Complete (WARNING: no Level-2 matches found)")
+    else:
+        print_header("Pipeline Complete!")
+
     print("Output locations:")
     if 'convert' in stages:
         print(f"  Converted mzML: {converted_dir}")
@@ -1041,11 +1491,12 @@ def run_pipeline(args):
         print("Result files:")
         for f in sorted(results_dir.glob("*.*")):
             print(f"  {f.name}")
-    
-    return 0
+
+    # 0 = success, EXIT_NO_MATCHES (2) = completed with warning (no matches)
+    return exit_code
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(
         description="GC-MS Suspect Screening Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1148,7 +1599,29 @@ Examples:
         '--api-key', '-k',
         type=str,
         default=None,
-        help='EPA CompTox API key for toxicity data (optional)'
+        help='EPA CompTox API key for toxicity data (optional). Prefer '
+             f'setting the {API_KEY_ENV} environment variable instead so '
+             'the key never appears on a command line.'
+    )
+
+    # v3.1.0: forwarded verbatim to cli.py
+    parser.add_argument(
+        '--ri-extrapolation',
+        choices=['spline', 'linear'],
+        default='spline',
+        help='How retention indices are computed for features whose RT '
+             'lies outside the alkane calibration range: "spline" '
+             '(default, cubic-spline extrapolation) or "linear" (van den '
+             'Dool linear extrapolation from the terminal alkane pair). '
+             'Forwarded to cli.py.'
+    )
+
+    parser.add_argument(
+        '--allow-no-blanks',
+        action='store_true',
+        help='Permit a run in which no blank samples are identified '
+             '(blank feature filtering is then skipped). By default a '
+             'zero-blank run is refused. Forwarded to cli.py.'
     )
 
     parser.add_argument(
@@ -1291,18 +1764,42 @@ Examples:
     parser.add_argument(
         '--mzmine-import-threads',
         type=int,
-        default=1,
+        default=None,
         metavar='N',
-        help='Cap on the number of concurrent mzML import threads. '
-             'Default: 1 (serialised). MZmine import threads share '
-             'a rotating scratch file and races between them are the '
-             'most common cause of '
+        help='Optional cap on the MZmine thread count (applies to the '
+             'whole MZmine run). Default: none, i.e. --threads is used as '
+             'given. Pass 1 to serialise mzML import: MZmine import '
+             'threads share a rotating scratch file and races between '
+             'them are the most common cause of '
              '"java.lang.InternalError: a fault occurred in an unsafe '
-             'memory access operation". Raise only if your --threads '
-             'is already low and you want concurrent imports.'
+             'memory access operation". (Before v3.1.0 this defaulted '
+             'to 1, which silently overrode --threads.)'
     )
 
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv=None, output=None):
+    """Pipeline entry point.
+
+    `argv`: argument list (defaults to sys.argv[1:]); lets the frozen GUI
+    call the pipeline in-process. `output`: optional callable receiving
+    every chunk of text the pipeline prints (in addition to the current
+    sys.stdout, which may be None in a windowed PyInstaller build), so
+    the GUI console can stream log lines without a subprocess.
+
+    Returns 0 on success, 2 when the run completed but found no Level-2
+    matches (EXIT_NO_MATCHES), 1 on error.
+    """
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as e:
+        # argparse exits on --help / usage errors; when called in-process
+        # we must not tear down the host (GUI) interpreter.
+        if argv is None:
+            raise
+        return e.code if isinstance(e.code, int) else 1
 
     # Apply tool-path overrides. We rebind the module-level constants
     # so existing call sites (validate_setup / run_conversion /
@@ -1317,17 +1814,25 @@ Examples:
     if args.batch_file:
         BATCH_FILE = Path(args.batch_file)
 
-    try:
-        return run_pipeline(args)
-    except KeyboardInterrupt:
-        print("\n\nPipeline interrupted by user.")
-        return 1
-    except Exception as e:
-        print(f"\n\nERROR: {e}")
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
-        return 1
+    _reset_cancel()
+
+    def _run():
+        try:
+            return run_pipeline(args)
+        except KeyboardInterrupt:
+            print("\n\nPipeline interrupted by user.")
+            return 1
+        except Exception as e:
+            print(f"\n\nERROR: {e}")
+            if args.verbose or output is not None:
+                import traceback
+                traceback.print_exc()
+            return 1
+
+    if output is None:
+        return _run()
+    with _StdoutRedirect(output):
+        return _run()
 
 
 if __name__ == "__main__":

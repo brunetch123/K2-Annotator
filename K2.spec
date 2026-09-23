@@ -1,10 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
 K2 Annotator - PyInstaller Build Specification
-Version 3.0.8
+Version 3.1.0
 
 Build with: pyinstaller K2.spec --clean
 Output: dist/K2/K2.exe (folder mode) or dist/K2.exe (onefile mode)
+
+v3.1.0: the frozen GUI runs gcms_pipeline and cli.py IN-PROCESS (there is
+no python.exe to spawn inside a bundle), so those modules and everything
+under scripts/src must be analysed by PyInstaller. scripts/ is on pathex
+and the modules are listed as hidden imports below.
 """
 
 import os
@@ -14,6 +19,12 @@ block_cipher = None
 
 # Get the directory containing this spec file
 SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
+SCRIPTS_DIR = os.path.join(SPEC_DIR, 'scripts')
+
+# Windows icon is optional: only pass icon= when the .ico actually exists
+# (create it from K2Icon.png if you want one).
+ICON_FILE = os.path.join(SPEC_DIR, 'K2Icon.ico')
+EXE_ICON = ICON_FILE if os.path.exists(ICON_FILE) else None
 
 # Define data files to include
 # Format: (source, destination_folder)
@@ -38,10 +49,11 @@ datas = [
     # Library templates
     ('templates', 'templates'),
     
-    # Source modules (needed for imports)
+    # Source copies of the pipeline scripts. The modules themselves are
+    # compiled into the bundle via hiddenimports; these plain copies are
+    # kept so gcms_pipeline's SCRIPTS_DIR (= sys._MEIPASS/scripts) exists
+    # and users can read the code that ran.
     ('scripts/src', 'scripts/src'),
-    
-    # Additional scripts that may be called
     ('scripts/cli.py', 'scripts'),
     ('scripts/gcms_pipeline.py', 'scripts'),
     ('scripts/k2_config.py', 'scripts'),
@@ -50,6 +62,37 @@ datas = [
 
 # Hidden imports that PyInstaller might miss
 hiddenimports = [
+    # Pipeline modules executed in-process by the frozen GUI (v3.1.0)
+    'gcms_pipeline',
+    'cli',
+    'k2_config',
+    'k2_screens',
+    'src',
+    'src.matching_engine',
+    'src.reporter',
+    'src.summary_tables',
+    'src.surrogate_analyzer',
+    'src.surrogate_reporter',
+    'src.structure_helper',
+    'src.ctx_client',
+    'src.http_session',
+    'src.is_normalizer',
+    'src.library_parser',
+    'src.universal_parser',
+    'src.ri_calibration',
+    'src.rhrmf',
+    'src.spectral_math',
+    'src.msp_reader',
+    'src.run_manifest',
+    'src.version',
+
+    # Scientific stack used by the matching engine
+    'scipy',
+    'scipy.interpolate',
+    'scipy.stats',
+    'scipy.special',
+    'scipy.linalg',
+
     # GUI
     'tkinter',
     'tkinter.ttk',
@@ -117,7 +160,7 @@ excludes = [
 
 a = Analysis(
     ['scripts/k2_gui.py'],
-    pathex=[SPEC_DIR],
+    pathex=[SPEC_DIR, SCRIPTS_DIR],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
@@ -152,7 +195,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='K2Icon.ico',  # Windows icon (create from K2Icon.png)
+    icon=EXE_ICON,  # Windows icon (optional; None when K2Icon.ico is absent)
 )
 
 coll = COLLECT(
@@ -191,6 +234,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='K2Icon.ico',
+    icon=EXE_ICON,
 )
 """

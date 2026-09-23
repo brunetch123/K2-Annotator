@@ -186,22 +186,34 @@ This file contains three example compounds demonstrating all required and recomm
 
 ---
 
-### 4. RI Calibration File (Optional)
+### 4. RI Calibration File (Required for MZmine data)
 
-**Format:** Tab-delimited text file
-**Example:** any RI calibration table exported from MS-DIAL or constructed manually
+**Format:** two columns (carbon number, retention time in minutes), tab, comma,
+semicolon or space separated, header optional. Example:
+`templates/ri_calibration_template.txt`.
 
-**Format:**
 ```
-Carbon_Number    Retention_Time
-9    5.123
-10    6.456
-11    7.789
+Carbon number    RT(min)
+9    12.482
+10   15.252
+11   18.289
 ...
 ```
 
-**Purpose:**
-Converts retention time to retention index for more accurate matching.
+**Purpose:** converts retention time to retention index (RI = 100 × carbon
+number, cubic-spline interpolation). RI agreement is a mandatory Level-2
+criterion, so K2 refuses to run MZmine data without a calibration file.
+
+**Coverage matters.** Features that elute before the first or after the last
+alkane get an *extrapolated* RI and are flagged `RI_Extrapolated = Yes` in
+every output table; a warning with the count is printed at load. Extrapolated
+RIs are not reliable far from the alkane range — run an alkane series that
+spans all features of interest. `--ri-extrapolation linear` switches from
+cubic-spline to linear (van den Dool) extrapolation outside the range; it does
+not change RIs inside the range.
+
+Duplicate carbon numbers, non-increasing retention times and fewer than three
+alkanes are rejected with an explicit message.
 
 ---
 
@@ -376,17 +388,19 @@ K2 generates results in:
 `<PIPELINE_ROOT>/results/<PROJECT_NAME>/`
 
 **Files created:**
-- `<PROJECT>_matches_<DATE>.csv`: Tabular results
-- `<PROJECT>_report_<DATE>.pdf`: Visual report with spectra
+- `<PROJECT>_matches_<DATE>.csv`: one row per (feature, library candidate) that passed every Level-2 criterion
+- `<PROJECT>_<DATE>_feature_summary.csv`: every feature with detection frequency, abundances, `Passed_BFF`, `RI_Extrapolated`
+- `<PROJECT>_<DATE>_match_summary.csv`: compact per-match score table
+- `<PROJECT>_report_<DATE>.pdf`: summary tables plus one page per match with mirror plot and hazard badges
+- `run_manifest.json`: K2 and package versions, SHA-256 of every input file, all resolved options (including `max_lib_peaks` and the RI extrapolation mode), sample classification, library statistics, calibration range and feature/match counts — keep it with the results
+- `pipeline_log.txt` and `mzmine_log.txt` (GUI / pipeline runs)
 
-**CSV Columns include:**
-- Feature_ID
-- Compound_Name
-- Formula
-- Total_Score, Spectral_Score, RI_Score
-- Library_RI, Observed_RI, RI_Delta
-- All sample abundances
-- Metadata fields
+**Key CSV columns:** `Feature ID`, `RT`, `RI_Exp`, `RI_Extrapolated`, `RI_Lib`, `RI_Err`, `RI_Err%`,
+`Compound_Name`, `Formula`, `HighRes?`, `RHRMF` (`N/A` for exact-mass library entries), `HR_RevDot`/`HR_FwdDot`
+(10 ppm peak-paired scores, exact-mass entries only), `RevDot`, `FwdDot`, `MaxAbundance`, `BFF_Threshold`,
+BFF audit columns, IS columns, metadata (`CAS`, `InChIKey`, `Source`, `Instrument`, `Comments`), hazard
+summary, and one `Abundance_<sample>` column per sample. Candidates for a feature are ordered by
+descending reverse dot product (the first is the "best match").
 
 ---
 
@@ -496,6 +510,20 @@ K2 Annotator now also catches this case at startup and refuses to run with an ac
 If staging is enabled and conversion is *still* slow, the bottleneck is now on the **read** side — MSConvert reading the raw `.D` folder from the network share. The simplest remedy is to copy the raw folder(s) to a local drive first and run the pipeline against that local copy.
 
 ---
+
+### New error messages in v3.1.0 (and what to do)
+
+| Message | Cause | Fix |
+|---|---|---|
+| `MZmine input has retention times only; an alkane RI calibration file (--ri-cal) is required` | No calibration file for MZmine data | Provide the alkane table (see First-Time Setup §4) |
+| `No blank columns were identified ...` | `--blank-id` / grouping matched nothing | Correct the identifier or classify blanks in the GUI table; `--allow-no-blanks` only if you really have none |
+| `No sample columns remain after classification` | Every column matched the blank identifier | Use a more specific identifier or the grouping table |
+| `sample classification names not found among the quantification columns` | Names in the grouping do not match the quant headers | Names are compared after stripping extensions and `Peak area`; check spelling |
+| `No quantification columns found in the MZmine CSV` | Export lacks `Peak area` / `Peak height` / `datafile:...:area` columns | Re-export the aligned feature list with areas |
+| `'row ID' is not an integer` | Wrong file passed as the quant table | Check the file |
+| `Library ... yielded no usable entries` | No entry had both an RI and a peak list | Check the RI field spelling and the peak-line format (see templates/TEST_DATA_README.md) |
+| `[OK] Analysis complete - NO Level 2 matches.` (exit code 2) | Everything ran; nothing passed | Look at `*_feature_summary.csv` (`Passed_BFF`, `RI_Extrapolated`) and the diagnostic trace (`K2_DIAG_MATCHING_CSV=path`) |
+| `N of M features elute outside the alkane calibration range` | Alkane series too short | Extend the alkane series; treat flagged RIs with caution |
 
 ### Getting Help
 
@@ -733,9 +761,15 @@ After normalization, the following appear in your output:
 ### Calculation
 
 ```
-Normalization Factor = Median IS Area / Sample IS Area
+Normalization Factor = max(IS Area over samples) / Sample IS Area
 Normalized Abundance = Raw Abundance × Normalization Factor
 ```
+
+The sample with the largest IS response keeps factor 1; every other sample is
+scaled *up*. Samples without an IS value keep factor 1 and are listed in a
+warning. Normalisation is applied once, from the parsed abundances, however
+many times a project is re-run in a session. Surrogate recoveries use the
+normalised abundances directly (they are not scaled a second time).
 
 ### Best Practices
 
@@ -780,26 +814,36 @@ Brunet, C. (2026). K2 Annotator: an open-source GC-MS suspect screening pipeline
 
 ---
 
-## Level 2 Matching Criteria (current production)
+## Level 2 Matching Criteria (v3.1.0)
 
-Every candidate that earns a Level 2 annotation in K2 Annotator currently must clear all of:
+The full, citable description of every computation is in
+[docs/SCORING_METHODS.md](docs/SCORING_METHODS.md). Every candidate that earns
+a Level-2 annotation must clear all of:
 
-1. **Retention Index agreement**
-   - Experimental RI within ±50 of library RI **AND** within 1.5% relative error
-   - RI calibration is via cubic spline through alkane standards; features outside the alkane RT range are extrapolated and matched normally (no exclusion)
+1. **Blank Feature Filter** — max abundance in any (non-reference) sample must
+   strictly exceed `c × (mean_blank + 3·SD_blank)`, c = 5 by default
+   (`--bff-c-factor`). A run with no blank column is refused unless
+   `--allow-no-blanks`. `--bff-mode adjusted` (MAD-based) is an optional mode
+   **outside** the Koelmel et al. 2022 framework.
+2. **Retention index** — |ΔRI| ≤ 50 **and** ≤ 1.5 % of the feature RI. RI comes
+   from the alkane calibration; extrapolated RIs are flagged.
+3. **Spectral similarity** — reverse dot > 600 **and** forward dot > 500
+   (unit-mass bins, weights √intensity × m/z, squared cosine × 1000; the
+   reverse dot ignores feature peaks absent from the library entry). The
+   library entry is trimmed to its 20 most intense peaks at load
+   (`--max-lib-peaks`, recorded in the manifest).
+4. **Exact-mass evidence** — for exact-mass library entries (metadata flag, or
+   ≥ 2 peaks with ≥ 3 decimal digits, one in the top 3): the dot products are
+   recomputed with 10 ppm peak pairing and must again clear 600/500
+   (`HR_RevDot`/`HR_FwdDot`). For all other entries: RHRMF > 75, computed
+   after Kwiecien et al. 2015 — ±10 ppm about the measured cation m/z
+   (electron mass subtracted), sub-formulas of the candidate formula,
+   isotopologue variants for ¹³C/³⁷Cl/⁸¹Br/³⁴S/³⁰Si, TIC-weighted score;
+   labelled formulas (D, ¹³C) are supported.
 
-2. **Spectral similarity (NIST-style weighted cosine, 0–1000 scale)**
-   - Reverse dot product > 600 **AND** forward dot product > 500
-   - Computed at unit resolution after the library is trimmed to its top-20 most intense peaks (this equalises peak counts between LR and HR library entries; configurable via `--max-lib-peaks N`)
-
-3. **Exact-mass evidence**
-   - For library entries flagged as truly high-resolution (≥2 sub-Da m/z peaks with at least one in the top 3 by intensity, excluding z=2 half-integer artifacts and 1-decimal-rounded values): re-score with an HR-aware dot product using **10 ppm peak-pair matching**. Both >600 reverse and >500 forward thresholds must clear at the tighter resolution.
-   - For all other library entries: pass an RHRMF (Reverse High-Resolution Mass Filter) score > 75. K2's RHRMF follows Kwiecien 2015 (Anal. Chem. 87, 8328): 10 ppm tolerance, on-the-fly isotopologue substitution for 13C / 37Cl / 81Br / 34S / 30Si, TIC-weighted scoring (∑(mz × intensity)_annotated / ∑(mz × intensity)_observed).
-
-4. **Blank Feature Filter**
-   - Feature's max-sample abundance must exceed `c_factor × (mean_blank + 3·SD_blank)` (standard mode) or the analogous MAD-based threshold (adjusted mode). Default `c_factor = 5.0`; tunable via `--bff-c-factor` and `--bff-mode`.
-
-The framework adapts the Koelmel et al. 2022 GC-HRMS scoring schema (Exposome 2(1) osac007). See [CHANGELOG.md](CHANGELOG.md) for the full version history, including the v3.0.20 / v3.0.21 changes that brought RHRMF and HR-aware spectral matching into line with the literature.
+Sample classification comes from the GUI table (`--grouping` on the command
+line); samples typed *Reference* are excluded from the BFF maximum and from
+the summary statistics.
 
 ---
 

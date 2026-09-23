@@ -126,7 +126,6 @@ hiddenimports = [
     'reportlab.pdfgen.canvas',
     
     # Chemistry APIs
-    'pubchempy',
     'requests',
     
     # EPA CompTox API

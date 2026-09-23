@@ -28,6 +28,8 @@ When K2 opens:
    - User file: `users\default.mzuser` (included)
    - Batch file: `config\gc_ei_workflow.mzbatch` (included)
    - Library: your own CSV or MSP file (see `templates/`)
+   - RI calibration: an n-alkane table such as `templates/ri_calibration_template.txt`
+     (required for MZmine data — RI is a mandatory Level-2 criterion)
    - RI Cal: optional, your own tab-delimited alkane RT table
 
 5. Check **"Save as default"** boxes so you don't have to do this again

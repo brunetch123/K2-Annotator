@@ -425,7 +425,7 @@ def main():
                 "  get_hazard_matrix()",
                 w=3.4, h=1.30, palette=C_REPORT, body_size=8)
     draw_module(ax, 14.4, Y_REPORT,
-                "epa_client.py /\nctx_client.py",
+                "http_session.py /\nctx_client.py",
                 "EPA CompTox API\nPubChem fallback",
                 w=3.0, h=1.30, palette=C_REPORT, body_size=8)
     draw_module(ax, 19.6, Y_REPORT, "surrogate_reporter.py",
@@ -460,7 +460,7 @@ def main():
               "InChIKey, CAS\n(per match)",
               w=2.6, h=0.65, fontsize=7.5)
 
-    # structure_helper -> epa_client
+    # structure_helper -> http_session / ctx_client
     ortho_segment(ax, [(10.6 + 1.7, Y_REPORT),
                        (14.4 - 1.5, Y_REPORT)],
                   color=C_REPORT[1])

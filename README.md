@@ -4,7 +4,7 @@
   <img src="K2Logo.png" alt="K2 Annotator logo" width="420">
 </p>
 
-**Open-source GC-MS data processing and Level 2 compound identification.**
+**Open-source GC-MS data processing and Level 2 compound identification.** (v3.1.0)
 
 ## Overview
 
@@ -12,7 +12,7 @@ K2 Annotator is an open-source pipeline for non-targeted GC-MS suspect screening
 
 - **Raw file conversion** via ProteoWizard MSConvert
 - **Feature detection and deconvolution** via MZmine
-- **Spectral library matching** with Retention Index, Kwiecien-style RHRMF (10 ppm + isotopologue substitution + TIC-weighted scoring), and HR-aware dot product for genuinely high-resolution library entries
+- **Spectral library matching** with Retention Index, Kwiecien-style RHRMF (10 ppm about the cation m/z, isotopologue substitution, TIC-weighted scoring), and a 10 ppm peak-paired dot product for exact-mass library entries. The exact computations are documented in [docs/SCORING_METHODS.md](docs/SCORING_METHODS.md).
 - **Hazard screening** via EPA CompTox APIs
 - **Surrogate standard recovery** calculation (v3.0.0+)
 
@@ -62,8 +62,25 @@ K2.bat
 ### Command Line Usage
 
 ```bash
-python scripts/cli.py --quant data.csv --msp spectra.msp --library library.msp --output results/
+python scripts/cli.py --quant data.csv --msp spectra.msp --library library.msp \
+                      --ri-cal alkanes.txt --grouping sample_grouping.json --output results/
 ```
+
+`--ri-cal` is required for MZmine data (RI is a mandatory Level-2 criterion).
+`--grouping` takes the per-sample Blank/Sample/Reference table the GUI writes;
+without it, blanks are recognised by the `--blank-id` substring. Every run
+writes `run_manifest.json` (versions, input hashes, resolved options). Exit
+code 0 = matches found, 2 = completed with no matches, 1 = error.
+
+### Running the tests
+
+```bash
+python -m pytest
+```
+
+The `tests/` package (99 tests) builds a synthetic dataset from fragment
+formulas and checks every Level-2 criterion, the input parsers and the
+end-to-end CLI. Run it after changing anything under `scripts/src/`.
 
 ## External Dependencies
 
@@ -127,26 +144,28 @@ K2-GCMS-Pipeline/
 │   ├── gcms_pipeline.py   # Pipeline orchestration
 │   ├── k2_config.py       # Configuration management
 │   ├── k2_screens.py      # GUI screen definitions
-│   ├── main.py            # Entry point
 │   └── src/               # Core processing modules
-│       ├── universal_parser.py    # Multi-format data parser
-│       ├── library_parser.py      # Library file parser
-│       ├── matching_engine.py     # Spectral matching
-│       ├── spectral_math.py       # Dot product scoring
-│       ├── reporter.py            # Report generation
-│       ├── is_normalizer.py       # Internal standard normalization
+│       ├── version.py             # Version string (single source of truth)
+│       ├── msp_reader.py          # Tolerant MSP reader shared by all parsers
+│       ├── universal_parser.py    # MZmine / MS-DIAL feature-table parser, BFF
+│       ├── library_parser.py      # Library file parser (CSV / MSP)
+│       ├── matching_engine.py     # Level-2 matching
+│       ├── spectral_math.py       # Dot products (unit-mass and 10 ppm paired)
+│       ├── rhrmf.py               # Reverse HR mass filter, HR detector
 │       ├── ri_calibration.py      # Retention index calibration
-│       ├── rhrmf.py               # Reverse HR mass formula filter
-│       ├── structure_helper.py    # PubChem structure lookup
+│       ├── is_normalizer.py       # Internal standard normalization
+│       ├── reporter.py            # Report generation
+│       ├── summary_tables.py      # Feature/match summary CSV+PDF
+│       ├── run_manifest.py        # run_manifest.json provenance record
 │       ├── surrogate_analyzer.py  # Surrogate recovery analysis
 │       ├── surrogate_reporter.py  # Surrogate recovery reports
-│       ├── ctx_client.py          # EPA CompTox API client
-│       ├── epa_client.py          # Legacy EPA API client
-│       ├── summary_tables.py      # Feature/match summary CSV+PDF
-│       └── msdial_parser.py       # MS-DIAL format parser (legacy;
-│                                  # superseded by universal_parser)
+│       ├── structure_helper.py    # PubChem structures / GHS hazard data
+│       ├── ctx_client.py          # EPA CompTox (ctxpy) client
+│       └── http_session.py        # Shared HTTP session (timeouts, retries, rate limit)
+├── tests/                 # pytest suite + synthetic dataset generator
+├── docs/                  # SCORING_METHODS.md, diagrams, plans
 ├── config/                # MZmine workflow configurations
-├── templates/             # Library format templates and test data
+├── templates/             # Library format templates, test data, alkane table
 ├── users/                 # MZmine user profiles
 ├── K2.bat                 # Windows launch script
 ├── K2.spec                # PyInstaller build specification
@@ -171,8 +190,8 @@ See [requirements.txt](requirements.txt):
 - **pandas**, **numpy** — Data processing
 - **matplotlib**, **Pillow** — Visualization
 - **reportlab** — PDF generation
-- **pubchempy** — PubChem API access
 - **ctx-python** — EPA CompTox API
+- **scipy** — RI calibration spline
 - **molmass** — Molecular weight calculations
 - **requests** — HTTP client
 

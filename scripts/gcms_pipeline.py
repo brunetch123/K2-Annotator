@@ -1128,17 +1128,22 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
 
     # Arguments for cli.py (the interpreter/script prefix is added only
     # for the subprocess path; the frozen build calls cli.main() directly).
+    # v3.1.0: cli.py runs with cwd=scripts/, so every path must be absolute
+    # (relative inputs such as "data/quant.csv" were previously "not found").
+    def _abs(p):
+        return str(Path(p).resolve())
+
     cli_args = [
-        "--quant", str(quant_file),
-        "--msp", str(msp_file),
-        "--library", str(library_file),
+        "--quant", _abs(quant_file),
+        "--msp", _abs(msp_file),
+        "--library", _abs(library_file),
         "--blank-id", blank_id,
         "--bff-mode", bff_mode,
         "--bff-c-factor", str(bff_c_factor),
         "--max-lib-peaks", str(max_lib_peaks),  # v3.0.19
         "--ri-extrapolation", str(ri_extrapolation),  # v3.1.0
         "--name", str(project_name),  # v3.1.0: used for output file names
-        "--output", str(output_folder)
+        "--output", _abs(output_folder)
     ]
     cmd = cli_args
 
@@ -1146,7 +1151,7 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
         cmd.append("--allow-no-blanks")  # v3.1.0
 
     if ri_cal:
-        cmd.extend(["--ri-cal", str(ri_cal)])
+        cmd.extend(["--ri-cal", _abs(ri_cal)])
 
     # v3.1.0: the API key travels in the environment, never on the
     # command line (cli.py reads K2_EPA_API_KEY as its --api-key fallback).
@@ -1155,17 +1160,17 @@ def run_library_matching(mzmine_folder, output_folder, project_name, library_fil
         env[API_KEY_ENV] = api_key
 
     if grouping:
-        cmd.extend(["--grouping", str(grouping)])
+        cmd.extend(["--grouping", _abs(grouping)])
 
     if is_config:
-        cmd.extend(["--is-config", str(is_config)])
+        cmd.extend(["--is-config", _abs(is_config)])
 
     # v3.0.0: Surrogate recovery parameters
     if surrogate_library:
-        cmd.extend(["--surrogate-library", str(surrogate_library)])
+        cmd.extend(["--surrogate-library", _abs(surrogate_library)])
 
     if surrogate_config:
-        cmd.extend(["--surrogate-config", str(surrogate_config)])
+        cmd.extend(["--surrogate-config", _abs(surrogate_config)])
 
     if reference_samples:
         cmd.extend(["--reference-samples", str(reference_samples)])

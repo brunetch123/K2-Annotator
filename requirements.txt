@@ -12,8 +12,7 @@ Pillow>=10.0.0
 # PDF reporting
 reportlab>=4.0.0
 
-# Chemistry APIs
-pubchempy>=1.0.0
+# Chemistry APIs (PubChem is queried directly through requests)
 requests>=2.28.0
 ctx-python>=0.0.1a1  # EPA CompTox API wrapper (latest: 0.0.1a10)
 
@@ -22,3 +21,6 @@ molmass>=2023.0.0
 
 # Retention index calibration (cubic spline interpolation)
 scipy>=1.10.0
+
+# Tests (optional): pip install pytest && python -m pytest
+# pytest>=7.0
